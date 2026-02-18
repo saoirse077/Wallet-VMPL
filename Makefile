@@ -145,8 +145,9 @@ build_and_run: build_svsm run
 
 ## Runs guest.qcow2 with SVSM
 ## Mounts ./module/ at /root/module 
+QEMU_PATH?=$(shell which qemu-system-x86_64)
 run:
-	sudo qemu-system-x86_64 \
+	sudo $(QEMU_PATH) \
 	-enable-kvm \
 	-cpu EPYC-v4,host-phys-bits=true  \
 	-machine q35,confidential-guest-support=sev0,memory-backend=ram1 \
