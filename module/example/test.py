@@ -18,7 +18,7 @@ def run_function(trustlet, data, outsize):
 with wallet.Wallet() as w:
     output_size = 200
     
-    zygote = w.create_zygote("../libpal-none.so", "python.manifest.template", "../libsysdb-none.so")
+    zygote = w.create_zygote("../libpal.so", "python.manifest.template", "../libsysdb.so")
 
     trustlet_1 = zygote.create_trustlet("./function.py")
 
