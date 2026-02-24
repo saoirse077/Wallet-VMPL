@@ -30,3 +30,6 @@
 [submodule "AzureTraces/invitro"]
 	path = AzureTraces/invitro
 	url = git@github.com:dimstav23/invitro.git
+[submodule "wasmlet"]
+	path = wasmlet
+	url = https://github.com/saoirse077/wasmlet.git
