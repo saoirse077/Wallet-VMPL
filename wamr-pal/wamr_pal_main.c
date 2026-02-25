@@ -116,14 +116,38 @@ static void write_output_channel(uint32_t status, uint32_t result)
  * This function orchestrates the complete WAMR lifecycle:
  *   heap init → runtime init → load module → invoke → unload → destroy → exit
  */
+/* Helper: Print PKRU value at a labeled checkpoint (MPK mode only) */
+#if ENABLE_MPK_ISOLATION
+static void print_pkru(const char *label)
+{
+    uint32_t pkru = pal_svsm_mpk_query_pkru();
+    pal_svsm_debug_print("[PKRU] ");
+    pal_svsm_debug_print(label);
+    pal_svsm_debug_print(": PKRU=");
+    pal_svsm_debug_print_hex((uint64_t)pkru);
+    pal_svsm_debug_print("\n");
+}
+#define PRINT_PKRU(label) print_pkru(label)
+#else
+#define PRINT_PKRU(label) ((void)0)
+#endif
+
 void wamr_pal_main(void)
 {
     uint32_t result = 0;
     int ret;
 
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Phase 2 Starting\n");
+    pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Phase 2b Starting (MPK="
+#if ENABLE_MPK_ISOLATION
+        "ON"
+#else
+        "OFF"
+#endif
+        ")\n");
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
+
+    PRINT_PKRU("startup");
 
     /* ===== Step 1: Initialize heap (dlmalloc mspace, 16 MB) ===== */
     pal_svsm_debug_print("[WAMR-PAL] Initializing heap...\n");
@@ -144,6 +168,7 @@ void wamr_pal_main(void)
         pal_svsm_exit(1);
     }
     pal_svsm_debug_print("[WAMR-PAL] WAMR runtime initialized\n");
+    PRINT_PKRU("after runtime_init");
 
     /* ===== Step 3: Load WASM module (embedded add.wasm) ===== */
     pal_svsm_debug_print("[WAMR-PAL] Loading embedded add.wasm (");
@@ -174,6 +199,7 @@ void wamr_pal_main(void)
         pal_svsm_exit(1);
     }
     pal_svsm_debug_print("[WAMR-PAL] Module loaded OK\n");
+    PRINT_PKRU("after module_load");
 
     /* ===== Step 4: Invoke add(3, 5) ===== */
     {
@@ -202,6 +228,7 @@ void wamr_pal_main(void)
             pal_svsm_debug_print_dec((int)result);
             pal_svsm_debug_print(" ***\n");
         }
+        PRINT_PKRU("after invoke add");
     }
 
     /* ===== Step 4b: Bonus test - invoke multiply(4, 7) ===== */
@@ -259,9 +286,11 @@ void wamr_pal_main(void)
     pal_svsm_debug_print("[WAMR-PAL] Destroying runtime...\n");
     wasmlet_runtime_destroy();
 
+    PRINT_PKRU("after cleanup");
+
     /* ===== Step 7: Exit ===== */
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] Phase 2 complete. All tests done.\n");
+    pal_svsm_debug_print("[WAMR-PAL] Phase 2b complete. All tests done.\n");
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
     pal_svsm_exit(0);
