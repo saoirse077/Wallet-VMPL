@@ -1,6 +1,6 @@
 [submodule "edk2"]
 	path = edk2
-	url = https://github.com/coconut-svsm/edk2.git
+	url = https://github.com/saoirse077/edk2-wallet.git
 	branch = svsm
 [submodule "linux"]
 	path = linux
@@ -8,7 +8,8 @@
 	branch = svsm-vmpl-guest
 [submodule "svsm"]
 	path = svsm
-	url = https://github.com/TUM-DSE/svsm.git
+	url = https://github.com/saoirse077/svsm-wallet.git
+	branch = mpk-dev
 [submodule "client/snphost"]
 	path = client/snphost
 	url = https://github.com/virtee/snphost.git
@@ -17,7 +18,8 @@
 	url = https://github.com/virtee/snpguest.git
 [submodule "gramine-svsm"]
 	path = gramine-svsm
-	url = https://github.com/TUM-DSE/gramine-svsm.git
+	url = https://github.com/saoirse077/gramine-svsm-wallet.git
+	branch = mpk-dev
 [submodule "Benchmarks/SeBS"]
 	path = Benchmarks/SeBS
 	url = https://github.com/TUM-DSE/Wallet-SeBS.git
