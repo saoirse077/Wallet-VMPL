@@ -143,10 +143,16 @@ ASFLAGS := -nostdlib -nostdinc -ffreestanding \
            -mno-red-zone \
            -m64
 
+# ---- MPK isolation switch ----
+# Phase 2a: ENABLE_MPK_ISOLATION=0 (default, use pal_malloc for all allocations)
+# Phase 2b: ENABLE_MPK_ISOLATION=1 (enable MPK pkey domain isolation)
+ENABLE_MPK_ISOLATION ?= 1
+
 # ---- WAMR compile-time feature macros ----
 # These control which WAMR features are enabled/disabled.
 # We only need the classic interpreter, no AOT/JIT/WASI/GC/threads.
 WAMR_DEFS := \
+    -DENABLE_MPK_ISOLATION=$(ENABLE_MPK_ISOLATION) \
     -DWASM_ENABLE_INTERP=1 \
     -DWASM_ENABLE_FAST_INTERP=0 \
     -DBUILD_TARGET_X86_64 \
