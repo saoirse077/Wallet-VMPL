@@ -274,10 +274,24 @@ clean:
 	rm -f $(PLATFORM_DIR)/*.o
 	rm -rf $(BUILD_DIR)
 
-# Deploy the ELF to module/example/ for guest access via 9p mount.
+# Deploy the ELF and WASM test module to module/example/ for guest access via 9p mount.
 deploy: $(TARGET)
 	cp $(TARGET) ../module/example/
-	@echo "Deployed $(TARGET) to ../module/example/"
+	@# Compile add.wat → add.wasm if wat2wasm is available, else use existing add.wasm
+	@if command -v wat2wasm >/dev/null 2>&1; then \
+		wat2wasm add.wat -o add.wasm 2>/dev/null || true; \
+	fi
+	@if [ -f add.wasm ]; then \
+		cp add.wasm ../module/example/; \
+		echo "Deployed $(TARGET) + add.wasm to ../module/example/"; \
+	else \
+		echo "WARNING: add.wasm not found. Compile add.wat first:"; \
+		echo "  wat2wasm add.wat -o add.wasm"; \
+		echo "Deployed $(TARGET) to ../module/example/"; \
+	fi
+	@# Ensure dummy files exist for create_zygote/create_trustlet
+	@touch ../module/example/dummy.manifest ../module/example/dummy.libos
+	@echo "dummy" > ../module/example/dummy_function.txt 2>/dev/null || true
 
 # Print ELF information for verification
 info: $(TARGET)

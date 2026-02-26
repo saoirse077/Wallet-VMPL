@@ -1,0 +1,6 @@
+# Dummy manifest for WAMR-PAL Phase 1 testing
+# This file is passed to create_zygote() as the manifest argument.
+# The SVSM maps it to TP_MANIFEST_START_VADDR (0x100_0000_0000) but
+# wamr_pal_main.c never accesses that address, so the content is irrelevant.
+# It just needs to be non-empty so load_file() succeeds.
+DUMMY
