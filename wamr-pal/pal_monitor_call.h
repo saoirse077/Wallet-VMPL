@@ -157,6 +157,24 @@ int pal_svsm_mpk_free_pkey(uint32_t pkey, void* addr, uint64_t size);
  */
 uint32_t pal_svsm_mpk_query_pkru(void);
 
+/* ========== Trustlet result notification ========== */
+
+/*
+ * Notify SVSM that results are ready in the output channel.
+ * Call number: 0x4FFFFFF8
+ *
+ * When VMPL1 calls this during invoke_trustlet, SVSM will:
+ *   1. Copy the output channel data to the Guest's return buffer
+ *      (via copy_out to result_addr in guest page table)
+ *   2. Set return_value = GETRESULT (1)
+ *   3. Break the ap_create loop (return false)
+ *   4. The Guest's ioctl returns invocationGetValue (1)
+ *
+ * After this call returns, VMPL1 is suspended until the next
+ * invoke_trustlet from the Guest.
+ */
+void pal_svsm_get_result(void);
+
 /* ========== Memory Channel management ========== */
 
 /*

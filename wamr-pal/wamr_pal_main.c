@@ -1,5 +1,5 @@
 /*
- * wamr_pal_main.c - WAMR PAL entry point for VMPL1 (Phase 2)
+ * wamr_pal_main.c - WAMR PAL entry point for VMPL1 (Phase 3)
  *
  * This is the main function of the bare-metal WAMR Runtime ELF
  * running in VMPL1. Called by pal_start.S after stack setup.
@@ -12,15 +12,43 @@
  *   - Input channel at 0x280_0000_0000 (data from VMPL0/guest)
  *   - Output channel at 0x300_0000_0000 (results to VMPL0/guest)
  *
- * Phase 2 flow:
- *   1. pal_heap_init()           → 初始化全局堆 (dlmalloc mspace, 16 MB)
- *   2. wasmlet_runtime_init()    → 初始化 WAMR runtime (+ MPK 分配器)
- *   3. wasmlet_load_module()     → 加载嵌入的 add.wasm 模块
- *   4. wasmlet_invoke("add",…)   → 实例化 + 执行 add(3,5) + 销毁实例
- *   5. 输出结果到 output channel
- *   6. wasmlet_unload_module()   → 卸载模块
- *   7. wasmlet_runtime_destroy() → 销毁 WAMR runtime
- *   8. pal_svsm_exit(0)          → 退出 VMPL1
+ * Phase 3 execution model (two-phase lifecycle):
+ *
+ *   Phase A — early_invoke (triggered by create_zygote from Guest):
+ *     1. pal_heap_init()           → Initialize global heap (dlmalloc mspace)
+ *     2. wasmlet_runtime_init()    → Initialize WAMR runtime (+ MPK allocator)
+ *     3. pal_svsm_exit(0)          → Suspend VMPL1, return to SVSM
+ *        (VMSA.RIP now points to instruction after cpuid in pal_svsm_exit)
+ *
+ *   Phase B — invoke_trustlet (triggered by invoke_trustlet_bin from Guest):
+ *     (pal_svsm_exit returns normally because SVSM's ap_create resumes VMPL1)
+ *     4. Read WASM bytecode from input channel (written by SVSM's copy_into)
+ *     5. wasmlet_load_module()     → Load WASM module
+ *     6. wasmlet_invoke()          → Instantiate + execute + destroy instance
+ *     7. Write result to output channel
+ *     8. pal_svsm_get_result()     → Notify SVSM results are ready
+ *        (SVSM copies output channel to Guest buffer via copy_out)
+ *        (pal_svsm_get_result returns when next invoke_trustlet resumes VMPL1)
+ *     9. Loop back to step 4 for next invocation
+ *
+ *   Cleanup (when Guest sends a zero-size WASM or explicit shutdown):
+ *     10. wasmlet_unload_module()
+ *     11. wasmlet_runtime_destroy()
+ *     12. pal_svsm_exit(0)         → Final exit
+ *
+ * Input channel protocol (at 0x280_0000_0000):
+ *   [0..3]   uint32_t wasm_size      // WASM bytecode size in bytes
+ *   [4..7]   uint32_t func_name_len  // Length of function name (without \0)
+ *   [8..9]   uint16_t argc           // Number of i32 arguments
+ *   [10..11] uint16_t reserved       // Reserved (padding)
+ *   [12..12+func_name_len-1] char func_name[]  // Function name (NOT null-terminated in channel)
+ *   [aligned to 4 bytes]
+ *   [arg_offset..arg_offset+argc*4-1] uint32_t argv[]  // Function arguments
+ *   [argv_end..argv_end+wasm_size-1]  uint8_t wasm_bytes[]  // WASM bytecode
+ *
+ * Output channel protocol (at 0x300_0000_0000):
+ *   [0..3]   uint32_t status   // 0 = success, non-zero = error code
+ *   [4..7]   uint32_t result   // Function return value (i32)
  */
 
 #include "pal_monitor_call.h"
@@ -32,49 +60,41 @@
 #define INPUT_CHANNEL_ADDR   0x28000000000ULL
 #define OUTPUT_CHANNEL_ADDR  0x30000000000ULL
 
-/* Output channel data format:
- *   [0..3]  uint32_t status   // 0 = success, non-zero = error
- *   [4..7]  uint32_t result   // function return value
- */
+/* Output channel data format offsets (in bytes) */
 #define OUTPUT_STATUS_OFFSET  0
 #define OUTPUT_RESULT_OFFSET  4
 
-/*
- * ============================================================
- * Embedded WASM test module: add.wasm (84 bytes)
- *
- * Source: wasmlet/tests/wasm-modules/add.wasm
- * Exports: add(i32, i32) -> i32
- *          multiply(i32, i32) -> i32
- *          get_answer() -> i32
- *
- * Compiled from:
- *   (module
- *     (func (export "add") (param i32 i32) (result i32)
- *       local.get 0  local.get 1  i32.add)
- *     (func (export "multiply") (param i32 i32) (result i32)
- *       local.get 0  local.get 1  i32.mul)
- *     (func (export "get_answer") (result i32)
- *       i32.const 42))
- * ============================================================
- */
-static const uint8_t embedded_wasm[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0b, 0x02, 0x60,
-    0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x00, 0x01, 0x7f, 0x03, 0x04, 0x03,
-    0x00, 0x00, 0x01, 0x07, 0x1f, 0x03, 0x03, 0x61, 0x64, 0x64, 0x00, 0x00,
-    0x08, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x70, 0x6c, 0x79, 0x00, 0x01, 0x0a,
-    0x67, 0x65, 0x74, 0x5f, 0x61, 0x6e, 0x73, 0x77, 0x65, 0x72, 0x00, 0x02,
-    0x0a, 0x16, 0x03, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b, 0x07,
-    0x00, 0x20, 0x00, 0x20, 0x01, 0x6c, 0x0b, 0x04, 0x00, 0x41, 0x2a, 0x0b
+/* Maximum function name length we support */
+#define MAX_FUNC_NAME_LEN  128
+
+/* ============================================================
+ * Input channel protocol helpers
+ * ============================================================ */
+
+/* Input channel header layout */
+struct input_header {
+    uint32_t wasm_size;       /* [0..3]   */
+    uint32_t func_name_len;   /* [4..7]   */
+    uint16_t argc;            /* [8..9]   */
+    uint16_t reserved;        /* [10..11] */
+    /* Followed by: func_name, then argv, then wasm_bytes */
 };
-static const uint32_t embedded_wasm_size = sizeof(embedded_wasm);
+
+#define INPUT_HEADER_SIZE  12  /* sizeof(struct input_header) */
+
+/*
+ * Align offset up to 4-byte boundary.
+ */
+static inline uint32_t align4(uint32_t v)
+{
+    return (v + 3) & ~(uint32_t)3;
+}
 
 /*
  * write_output_channel - Write execution result to the output channel
  *
  * The output channel is at a fixed virtual address (0x300_0000_0000).
  * During invoke_trustlet, SVSM inflates the output channel pages.
- * During early_invoke (create_zygote), we inflate it ourselves.
  *
  * Format:
  *   [0..3]  uint32_t status   // 0 = success, 1 = error
@@ -88,35 +108,25 @@ static void write_output_channel(uint32_t status, uint32_t result)
      * at OUTPUT_CHANNEL_ADDR in our page table.
      *
      * select=1 means output channel.
+     *
+     * Note: During invoke_trustlet, SVSM already calls inflate_output()
+     * before resuming VMPL1. But we call inflate here as well for safety
+     * (in case the output channel was not yet inflated).
      */
     int ret = pal_svsm_inflate_channel(1, 4096);
     if (ret != 0) {
-        pal_svsm_debug_print("[WAMR-PAL] WARNING: inflate output channel failed, error=");
-        pal_svsm_debug_print_dec(ret);
-        pal_svsm_debug_print("\n");
+        pal_svsm_debug_print("[WAMR-PAL] WARNING: inflate output channel failed\n");
         /* Continue anyway - the pages might already be mapped */
     }
 
     volatile uint32_t *output = (volatile uint32_t *)OUTPUT_CHANNEL_ADDR;
     output[OUTPUT_STATUS_OFFSET / sizeof(uint32_t)] = status;
     output[OUTPUT_RESULT_OFFSET / sizeof(uint32_t)] = result;
-
-    pal_svsm_debug_print("[WAMR-PAL] Output channel written: status=");
-    pal_svsm_debug_print_dec((int)status);
-    pal_svsm_debug_print(", result=");
-    pal_svsm_debug_print_dec((int)result);
-    pal_svsm_debug_print("\n");
 }
 
-/*
- * wamr_pal_main - VMPL1 entry point (Phase 2)
- *
- * Called by pal_start.S. Must not return (calls pal_svsm_exit).
- *
- * This function orchestrates the complete WAMR lifecycle:
- *   heap init → runtime init → load module → invoke → unload → destroy → exit
- */
-/* Helper: Print PKRU value at a labeled checkpoint (MPK mode only) */
+/* ============================================================
+ * PKRU debug helpers (MPK mode only)
+ * ============================================================ */
 #if ENABLE_MPK_ISOLATION
 static void print_pkru(const char *label)
 {
@@ -132,13 +142,17 @@ static void print_pkru(const char *label)
 #define PRINT_PKRU(label) ((void)0)
 #endif
 
+/* ============================================================
+ * wamr_pal_main - VMPL1 entry point (Phase 3)
+ *
+ * Called by pal_start.S. Must not return (calls pal_svsm_exit).
+ * ============================================================ */
 void wamr_pal_main(void)
 {
-    uint32_t result = 0;
     int ret;
 
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Phase 2b Starting (MPK="
+    pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Phase 3 Starting (MPK="
 #if ENABLE_MPK_ISOLATION
         "ON"
 #else
@@ -149,148 +163,230 @@ void wamr_pal_main(void)
 
     PRINT_PKRU("startup");
 
-    /* ===== Step 1: Initialize heap (dlmalloc mspace, 16 MB) ===== */
+    /* =============================================================
+     * Phase A: Initialization (runs during early_invoke / create_zygote)
+     * ============================================================= */
+
+    /* Step 1: Initialize heap (dlmalloc mspace, 16 MB) */
     pal_svsm_debug_print("[WAMR-PAL] Initializing heap...\n");
     ret = pal_heap_init();
     if (ret != 0) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: Heap init failed\n");
-        write_output_channel(1, 0);
         pal_svsm_exit(1);
+        while (1) {}
     }
     pal_svsm_debug_print("[WAMR-PAL] Heap initialized (16 MB)\n");
 
-    /* ===== Step 2: Initialize WAMR runtime ===== */
+    /* Step 2: Initialize WAMR runtime */
     pal_svsm_debug_print("[WAMR-PAL] Initializing WAMR runtime...\n");
     ret = wasmlet_runtime_init();
     if (ret != 0) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: WAMR runtime init failed\n");
-        write_output_channel(1, 0);
         pal_svsm_exit(1);
+        while (1) {}
     }
     pal_svsm_debug_print("[WAMR-PAL] WAMR runtime initialized\n");
     PRINT_PKRU("after runtime_init");
 
-    /* ===== Step 3: Load WASM module (embedded add.wasm) ===== */
-    pal_svsm_debug_print("[WAMR-PAL] Loading embedded add.wasm (");
-    pal_svsm_debug_print_dec((int)embedded_wasm_size);
-    pal_svsm_debug_print(" bytes)...\n");
-
-    /*
-     * IMPORTANT: WAMR's wasm_runtime_load() modifies the buffer in-place
-     * (e.g. byte-order swaps, internal patching). The embedded_wasm array
-     * lives in .rodata (read-only segment), so we must copy it to a
-     * writable heap buffer before passing it to WAMR.
+    /* Step 3: Suspend VMPL1 — signal to SVSM that initialization is done.
+     *
+     * This triggers pal_svsm_exit(0) → CPUID 0x4FFFFFFE → SVSM sets
+     * return_value = EXIT(0) → handle_process_request returns false →
+     * early_invoke loop breaks → create_zygote returns to Guest.
+     *
+     * VMSA.RIP now points to the instruction after the CPUID in
+     * monitor_call(). When invoke_trustlet calls ap_create to resume
+     * VMPL1, execution continues right here — pal_svsm_exit returns
+     * normally, and we fall through to Phase B below.
      */
-    uint8_t *wasm_buf = (uint8_t *)pal_malloc(embedded_wasm_size);
-    if (!wasm_buf) {
-        pal_svsm_debug_print("[WAMR-PAL] FATAL: Failed to allocate WASM buffer\n");
-        write_output_channel(1, 0);
-        wasmlet_runtime_destroy();
-        pal_svsm_exit(1);
-    }
-    memcpy(wasm_buf, embedded_wasm, embedded_wasm_size);
+    pal_svsm_debug_print("[WAMR-PAL] Initialization complete, suspending...\n");
+    pal_svsm_exit(0);
 
-    ret = wasmlet_load_module(wasm_buf, embedded_wasm_size);
-    if (ret != 0) {
-        pal_svsm_debug_print("[WAMR-PAL] FATAL: Module load failed\n");
-        pal_free(wasm_buf);
-        write_output_channel(1, 0);
-        wasmlet_runtime_destroy();
-        pal_svsm_exit(1);
-    }
-    pal_svsm_debug_print("[WAMR-PAL] Module loaded OK\n");
-    PRINT_PKRU("after module_load");
+    /* =============================================================
+     * Phase B: Invocation loop (runs during invoke_trustlet)
+     *
+     * Each iteration:
+     *   1. Read input channel (WASM bytes + function name + args)
+     *   2. Load WASM module
+     *   3. Invoke function
+     *   4. Write result to output channel
+     *   5. Call pal_svsm_get_result() to return result to Guest
+     *   6. pal_svsm_get_result() returns when next invoke_trustlet
+     *      resumes us → loop back to step 1
+     * ============================================================= */
 
-    /* ===== Step 4: Invoke add(3, 5) ===== */
-    {
-        uint32_t argv[2] = { 3, 5 };
+    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
+    pal_svsm_debug_print("[WAMR-PAL] Entered invocation loop\n");
+    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
-        pal_svsm_debug_print("[WAMR-PAL] Calling add(3, 5)...\n");
+    for (;;) {
+        /* ---- Step 4: Read input channel ---- */
+        volatile uint8_t *input = (volatile uint8_t *)INPUT_CHANNEL_ADDR;
 
-        ret = wasmlet_invoke("add", 2, argv, &result);
-        if (ret != 0) {
-            pal_svsm_debug_print("[WAMR-PAL] FATAL: Invoke failed\n");
+        /* Read header */
+        struct input_header hdr;
+        hdr.wasm_size     = *(volatile uint32_t *)(input + 0);
+        hdr.func_name_len = *(volatile uint32_t *)(input + 4);
+        hdr.argc          = *(volatile uint16_t *)(input + 8);
+        hdr.reserved      = 0;
+
+        pal_svsm_debug_print("[WAMR-PAL] Input: wasm_size=");
+        pal_svsm_debug_print_dec((int)hdr.wasm_size);
+        pal_svsm_debug_print(", func_name_len=");
+        pal_svsm_debug_print_dec((int)hdr.func_name_len);
+        pal_svsm_debug_print(", argc=");
+        pal_svsm_debug_print_dec((int)hdr.argc);
+        pal_svsm_debug_print("\n");
+
+        /* Shutdown signal: wasm_size == 0 means no more invocations */
+        if (hdr.wasm_size == 0) {
+            pal_svsm_debug_print("[WAMR-PAL] Received shutdown signal (wasm_size=0)\n");
+            break;
+        }
+
+        /* Validate header */
+        if (hdr.func_name_len == 0 || hdr.func_name_len > MAX_FUNC_NAME_LEN) {
+            pal_svsm_debug_print("[WAMR-PAL] ERROR: invalid func_name_len\n");
             write_output_channel(1, 0);
+            pal_svsm_get_result();
+            continue;
+        }
+
+        /* Read function name */
+        char func_name[MAX_FUNC_NAME_LEN + 1];
+        uint32_t offset = INPUT_HEADER_SIZE;
+        for (uint32_t i = 0; i < hdr.func_name_len; i++) {
+            func_name[i] = (char)input[offset + i];
+        }
+        func_name[hdr.func_name_len] = '\0';
+        offset += hdr.func_name_len;
+        offset = align4(offset);
+
+        pal_svsm_debug_print("[WAMR-PAL] Function: ");
+        pal_svsm_debug_print(func_name);
+        pal_svsm_debug_print("\n");
+
+        /* Read arguments */
+        uint32_t argv[16];  /* Support up to 16 i32 arguments */
+        uint16_t argc = hdr.argc;
+        if (argc > 16) argc = 16;
+        for (uint16_t i = 0; i < argc; i++) {
+            argv[i] = *(volatile uint32_t *)(input + offset);
+            offset += 4;
+        }
+
+        /* Read WASM bytecode */
+        uint32_t wasm_offset = offset;
+        uint32_t wasm_size = hdr.wasm_size;
+
+        pal_svsm_debug_print("[WAMR-PAL] WASM bytecode at input offset ");
+        pal_svsm_debug_print_dec((int)wasm_offset);
+        pal_svsm_debug_print(", size=");
+        pal_svsm_debug_print_dec((int)wasm_size);
+        pal_svsm_debug_print("\n");
+
+        /*
+         * Copy WASM bytecode to writable heap buffer.
+         * WAMR's wasm_runtime_load() modifies the buffer in-place
+         * (byte-order swaps, internal patching), so we cannot use
+         * the input channel memory directly.
+         */
+        uint8_t *wasm_buf = (uint8_t *)pal_malloc(wasm_size);
+        if (!wasm_buf) {
+            pal_svsm_debug_print("[WAMR-PAL] ERROR: Failed to allocate WASM buffer\n");
+            write_output_channel(2, 0);  /* status=2: allocation error */
+            pal_svsm_get_result();
+            continue;
+        }
+        for (uint32_t i = 0; i < wasm_size; i++) {
+            wasm_buf[i] = input[wasm_offset + i];
+        }
+
+        /* ---- Step 5: Load WASM module ---- */
+        pal_svsm_debug_print("[WAMR-PAL] Loading WASM module...\n");
+        PRINT_PKRU("before module_load");
+
+        ret = wasmlet_load_module(wasm_buf, wasm_size);
+        if (ret != 0) {
+            pal_svsm_debug_print("[WAMR-PAL] ERROR: Module load failed\n");
+            pal_free(wasm_buf);
+            write_output_channel(3, 0);  /* status=3: load error */
+            pal_svsm_get_result();
+            continue;
+        }
+        pal_svsm_debug_print("[WAMR-PAL] Module loaded OK\n");
+        PRINT_PKRU("after module_load");
+
+        /* ---- Step 6: Invoke function ---- */
+        uint32_t result = 0;
+
+        pal_svsm_debug_print("[WAMR-PAL] Invoking ");
+        pal_svsm_debug_print(func_name);
+        pal_svsm_debug_print("(");
+        for (uint16_t i = 0; i < argc; i++) {
+            if (i > 0) pal_svsm_debug_print(", ");
+            pal_svsm_debug_print_dec((int)argv[i]);
+        }
+        pal_svsm_debug_print(")...\n");
+
+        ret = wasmlet_invoke(func_name, (int)argc, argv, &result);
+        if (ret != 0) {
+            pal_svsm_debug_print("[WAMR-PAL] ERROR: Invoke failed\n");
             wasmlet_unload_module();
-            wasmlet_runtime_destroy();
-            pal_svsm_exit(1);
+            pal_free(wasm_buf);
+            write_output_channel(4, 0);  /* status=4: invoke error */
+            pal_svsm_get_result();
+            continue;
         }
 
         pal_svsm_debug_print("[WAMR-PAL] Result: ");
         pal_svsm_debug_print_dec((int)result);
         pal_svsm_debug_print("\n");
+        PRINT_PKRU("after invoke");
 
-        /* Verify result */
-        if (result == 8) {
-            pal_svsm_debug_print("[WAMR-PAL] *** PASS: add(3, 5) == 8 ***\n");
-        } else {
-            pal_svsm_debug_print("[WAMR-PAL] *** FAIL: expected 8, got ");
-            pal_svsm_debug_print_dec((int)result);
-            pal_svsm_debug_print(" ***\n");
-        }
-        PRINT_PKRU("after invoke add");
+        /* ---- Step 7: Write result to output channel ---- */
+        write_output_channel(0, result);
+
+        pal_svsm_debug_print("[WAMR-PAL] Output written: status=0, result=");
+        pal_svsm_debug_print_dec((int)result);
+        pal_svsm_debug_print("\n");
+
+        /* ---- Step 7.5: Cleanup this invocation ---- */
+        wasmlet_unload_module();
+        pal_free(wasm_buf);
+
+        /* ---- Step 8: Notify SVSM results are ready ---- */
+        pal_svsm_debug_print("[WAMR-PAL] Calling pal_svsm_get_result()...\n");
+        pal_svsm_get_result();
+
+        /*
+         * pal_svsm_get_result() triggers CPUID 0x4FFFFFF8.
+         * SVSM's handler:
+         *   1. copy_out(result_addr, guest_page_table, result_size)
+         *      → copies output channel to Guest's return_buffer
+         *   2. return_value = GETRESULT (1)
+         *   3. returns false → invoke_trustlet loop breaks
+         *   4. Guest ioctl returns 1 (invocationGetValue)
+         *   5. Guest C code returns return_buffer pointer
+         *   6. Python gets bytes
+         *
+         * When the next invoke_trustlet_bin is called from Guest,
+         * SVSM resumes VMPL1 via ap_create, and pal_svsm_get_result()
+         * returns here. We loop back to read the next input.
+         */
+        pal_svsm_debug_print("[WAMR-PAL] Resumed for next invocation\n");
     }
 
-    /* ===== Step 4b: Bonus test - invoke multiply(4, 7) ===== */
-    {
-        uint32_t argv2[2] = { 4, 7 };
-        uint32_t result2 = 0;
-
-        pal_svsm_debug_print("[WAMR-PAL] Calling multiply(4, 7)...\n");
-
-        ret = wasmlet_invoke("multiply", 2, argv2, &result2);
-        if (ret == 0) {
-            pal_svsm_debug_print("[WAMR-PAL] multiply result: ");
-            pal_svsm_debug_print_dec((int)result2);
-            pal_svsm_debug_print("\n");
-            if (result2 == 28) {
-                pal_svsm_debug_print("[WAMR-PAL] *** PASS: multiply(4, 7) == 28 ***\n");
-            } else {
-                pal_svsm_debug_print("[WAMR-PAL] *** FAIL: expected 28 ***\n");
-            }
-        } else {
-            pal_svsm_debug_print("[WAMR-PAL] multiply invoke failed\n");
-        }
-    }
-
-    /* ===== Step 4c: Bonus test - invoke get_answer() ===== */
-    {
-        uint32_t argv3[1] = { 0 };  /* need buffer for return value */
-        uint32_t result3 = 0;
-
-        pal_svsm_debug_print("[WAMR-PAL] Calling get_answer()...\n");
-
-        ret = wasmlet_invoke("get_answer", 0, argv3, &result3);
-        if (ret == 0) {
-            pal_svsm_debug_print("[WAMR-PAL] get_answer result: ");
-            pal_svsm_debug_print_dec((int)result3);
-            pal_svsm_debug_print("\n");
-            if (result3 == 42) {
-                pal_svsm_debug_print("[WAMR-PAL] *** PASS: get_answer() == 42 ***\n");
-            } else {
-                pal_svsm_debug_print("[WAMR-PAL] *** FAIL: expected 42 ***\n");
-            }
-        } else {
-            pal_svsm_debug_print("[WAMR-PAL] get_answer invoke failed\n");
-        }
-    }
-
-    /* ===== Step 5: Write result to output channel ===== */
-    write_output_channel(0, result);
-
-    /* ===== Step 6: Cleanup ===== */
-    pal_svsm_debug_print("[WAMR-PAL] Unloading module...\n");
-    wasmlet_unload_module();
-    pal_free(wasm_buf);  /* Free the heap-allocated WASM buffer after unload */
-
-    pal_svsm_debug_print("[WAMR-PAL] Destroying runtime...\n");
+    /* =============================================================
+     * Cleanup and final exit
+     * ============================================================= */
+    pal_svsm_debug_print("[WAMR-PAL] Destroying WAMR runtime...\n");
     wasmlet_runtime_destroy();
 
     PRINT_PKRU("after cleanup");
 
-    /* ===== Step 7: Exit ===== */
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] Phase 2b complete. All tests done.\n");
+    pal_svsm_debug_print("[WAMR-PAL] Phase 3 complete. Exiting.\n");
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
     pal_svsm_exit(0);

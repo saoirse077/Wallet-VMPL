@@ -82,8 +82,8 @@ extern void   mspace_track_large_chunks(mspace msp, int enable);
  * 我们的 MPK 域从 0x60_0000_0000 开始，留出足够空间 */
 #define MPK_REGION_BASE 0x6000000000ULL
 
-/* PKEY 池最大容量（Phase 2b 只需 1-2 个，减少预分配以降低 SVSM 日志量） */
-#define PKEY_POOL_SIZE 4
+/* PKEY 池最大容量（Phase 3 单线程单模块，只需 1 个 pkey） */
+#define PKEY_POOL_SIZE 1
 #define PKEY_POOL_MAX 15
 
 /* ============ PKEY 池（简化版，固定数组） ============ */

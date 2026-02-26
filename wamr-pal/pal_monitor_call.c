@@ -211,6 +211,19 @@ uint32_t pal_svsm_mpk_query_pkru(void) {
     return (uint32_t)data.rax;
 }
 
+/* ========== Trustlet result notification ========== */
+
+void pal_svsm_get_result(void) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFF8;
+    data.rbx = 0;
+    data.rcx = 0;
+    data.rdx = 0;
+    monitor_call(&data);
+    /* After this returns, VMPL1 has been re-awakened by the next
+     * invoke_trustlet call (or never returns if no further invocations). */
+}
+
 /* ========== Memory Channel management ========== */
 
 int pal_svsm_inflate_channel(int select, uint64_t size) {

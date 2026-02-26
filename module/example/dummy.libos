@@ -1,0 +1,6 @@
+# Dummy libos for WAMR-PAL Phase 1 testing
+# This file is passed to create_zygote() as the libos argument.
+# The SVSM maps it to TP_LIBOS_START_VADDR (0x180_0000_0000) but
+# wamr_pal_main.c never accesses that address, so the content is irrelevant.
+# It just needs to be non-empty so load_file() succeeds.
+DUMMY
