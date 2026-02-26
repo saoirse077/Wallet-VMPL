@@ -16,7 +16,7 @@ Phase 3 的核心目标是实现一个**完整的、单线程的 Wallet-VMPL 执
 | 版本 | 说明 |
 |------|------|
 | **Phase 3a**（当前版本） | 每次 `invoke_trustlet_bin` 调用都传递完整的 WASM 字节码 + 函数名 + 参数，VMPL1 每次都执行完整的 load module → invoke → unload module 流程 |
-| **Phase 3b**（下一版本） | 首次调用传递 WASM 字节码并加载 module，后续调用仅传递函数名 + 参数，VMPL1 复用已加载的 module，只执行 invoke |
+| **Phase 3b**（当前版本） | 首次调用传递 WASM 字节码并加载 module，后续调用仅传递函数名 + 参数，VMPL1 复用已加载的 module，只执行 invoke。同时 pkey 在 `mpk_domain_destroy` 中归还给 SVSM，解决 pkey 耗尽限制 |
 
 ## 二、整体架构
 
@@ -952,40 +952,213 @@ wasmlet_unload_module():
 
 **长期方案**（Phase 4 或后续）：修复 SVSM 侧的 `Drop` 实现，正确回收所有资源。
 
-### 11.2 pkey 耗尽限制
+### 11.2 pkey 耗尽限制（Phase 3a，已在 Phase 3b 中解决）
 
-当前最多连续运行 15 次（pkey 1-15 各消耗 1 个）。重启 Guest VM 可重置。
+Phase 3a 中最多连续运行 15 次（pkey 1-15 各消耗 1 个）。Phase 3b 通过在 `mpk_domain_destroy` 中调用 `pal_svsm_mpk_free_pkey` 将 pkey 归还给 SVSM，解决了此限制。
 
-## 十二、Phase 3b 展望
+## 十二、Phase 3b 实现
 
-Phase 3b 将优化函数调用模式，**首次调用加载 module，后续调用复用已加载的 module**：
+Phase 3b 包含两个核心改进：**模块复用**和 **pkey 归还 SVSM**。
 
 ### 12.1 Phase 3a vs Phase 3b 对比
 
-| 特性 | Phase 3a（当前） | Phase 3b（下一版） |
-|------|-----------------|-----------------|
+| 特性 | Phase 3a | Phase 3b |
+|------|----------|----------|
 | 每次调用传递 WASM 字节码 | ✓ 每次都传 | 仅首次传递 |
 | 每次调用 load/unload module | ✓ 每次都做 | 仅首次 load，最后 unload |
 | MPK 域创建/销毁 | 每次函数调用 | 仅首次创建，最后销毁 |
+| pkey 归还 SVSM | ✗ 不归还 | ✓ 在 `mpk_domain_destroy` 中归还 |
+| pkey 耗尽限制 | 最多 15 次 | 无限制（仅受 PROCESS_STORE 64 slots 限制） |
 | 适用场景 | 不同函数模块的独立调用 | 同一模块的多次函数调用 |
 
-### 12.2 Phase 3b 执行流设想
+### 12.2 改进 1：pkey 归还 SVSM
+
+#### 问题
+
+Phase 3a 中，`mpk_domain_destroy()` 仅将 pkey 归还到 VMPL1 本地池（`pkey_pool_free`），但不归还给 SVSM 的全局 `PkeyAllocator`。由于不调用 `delete()`，VMPL1 进程退出后 SVSM 也不会回收 pkey，导致全局 pkey bitmap 持续消耗，最多运行 15 次。
+
+#### 解决方案
+
+在 `mpk_domain_destroy()` 的 `pkey_pool_free(pkey)` 之后，新增调用 `pal_svsm_mpk_free_pkey(pkey, 0, 0)` 将 pkey 归还给 SVSM。
+
+**修改文件**：`wamr-pal/mpk_allocator_vmpl1.c`
+
+```c
+/* mpk_domain_destroy() 末尾 */
+
+/* 归还 PKEY 到 VMPL1 本地池 */
+pkey_pool_free(pkey);
+
+/* 同时归还 PKEY 给 SVSM 全局 PkeyAllocator（Phase 3b 新增）。
+ * addr=0, size=0 表示仅释放 pkey bitmap 位，不释放内存
+ * （内存已由上面的 mpk_region_unmap_pkey 释放）。 */
+int free_ret = pal_svsm_mpk_free_pkey((uint32_t)pkey, (void *)0, 0);
+if (free_ret != 0) {
+    pal_svsm_debug_print("[MPK] WARNING: pal_svsm_mpk_free_pkey failed\n");
+}
+```
+
+SVSM 侧 `mpk_free_pkey`（`mpk_memory.rs`）已实现：当 `addr=0, size=0` 时仅释放 pkey bitmap 位，不释放内存。
+
+### 12.3 改进 2：模块复用机制
+
+#### Input Channel 协议变更
+
+通过 `wasm_size` 和 `func_name_len` 字段组合区分三种模式：
+
+| wasm_size | func_name_len | 模式 | 说明 |
+|-----------|---------------|------|------|
+| > 0       | > 0           | Mode 1: Load + Invoke | 加载新模块 + 调用函数（首次调用） |
+| = 0       | > 0           | Mode 2: Invoke-only | 仅调用函数（复用已加载模块） |
+| = 0       | = 0           | Mode 3: Shutdown | 卸载模块 + 销毁运行时 + 退出 |
+
+#### Mode 1 数据布局（Load + Invoke）
 
 ```
-Guest:
-  invoke_trustlet_bin(wasm + "add" + [3,5])   → 首次：load module + invoke add
-  invoke_trustlet_bin("add" + [10, 20])        → 后续：仅 invoke add（不传 wasm）
-  invoke_trustlet_bin("add" + [100, 200])      → 后续：仅 invoke add
-  invoke_trustlet_bin(shutdown)                 → 卸载 module
+[0..3]   uint32_t wasm_size      // WASM 字节码大小 (> 0)
+[4..7]   uint32_t func_name_len  // 函数名长度
+[8..9]   uint16_t argc           // 参数个数
+[10..11] uint16_t reserved       // 保留
+[12..]   func_name               // 函数名（4 字节对齐）
+[..]     uint32_t argv[]         // 参数
+[..]     uint8_t wasm_bytes[]    // WASM 字节码
 ```
 
-### 12.3 Input Channel 协议变更（Phase 3b）
+#### Mode 2 数据布局（Invoke-only）
 
 ```
-wasm_size = 0 且 func_name_len > 0  → 仅调用函数（module 已加载）
-wasm_size > 0                        → 加载新 module + 调用函数
-wasm_size = 0 且 func_name_len = 0   → 关机信号
+[0..3]   uint32_t wasm_size = 0  // 不传 WASM 字节码
+[4..7]   uint32_t func_name_len  // 函数名长度
+[8..9]   uint16_t argc           // 参数个数
+[10..11] uint16_t reserved       // 保留
+[12..]   func_name               // 函数名（4 字节对齐）
+[..]     uint32_t argv[]         // 参数
+// 没有 wasm_bytes
 ```
+
+#### 主循环逻辑变更
+
+**修改文件**：`wamr-pal/wamr_pal_main.c`
+
+```c
+/* Phase 3b 主循环伪代码 */
+static uint8_t *g_wasm_buf = NULL;  /* 跟踪当前加载的 WASM 缓冲区 */
+
+for (;;) {
+    读 input channel header;
+
+    if (wasm_size == 0 && func_name_len == 0)  → Mode 3: 关机, break;
+
+    if (wasm_size > 0) {
+        /* Mode 1: Load + Invoke */
+        if (g_wasm_buf) {
+            wasmlet_unload_module();  /* 卸载旧模块 */
+            pal_free(g_wasm_buf);
+        }
+        g_wasm_buf = pal_malloc(wasm_size);
+        复制 WASM 字节码到 g_wasm_buf;
+        wasmlet_load_module(g_wasm_buf, wasm_size);
+    }
+    /* else: Mode 2: Invoke-only，复用已加载的模块 */
+
+    读函数名 + 参数;
+    wasmlet_invoke(func_name, argc, argv, &result);
+    write_output_channel(0, result);
+    pal_svsm_get_result();
+}
+
+/* 循环结束后清理 */
+if (g_wasm_buf) { wasmlet_unload_module(); pal_free(g_wasm_buf); }
+wasmlet_runtime_destroy();
+```
+
+### 12.4 测试脚本变更
+
+**修改文件**：`module/example/test_wamr.py`
+
+新增 `pack_input_invoke_only()` 函数（`wasm_size=0` 的纯调用模式），测试流程：
+
+| 测试 | 模式 | 函数调用 | 预期结果 | 说明 |
+|------|------|---------|---------|------|
+| Test 1 | Mode 1 (Load + Invoke) | `add(3, 5)` | 8 | 首次调用，传 WASM 字节码 |
+| Test 2 | Mode 2 (Invoke-only) | `add(10, 20)` | 30 | 复用模块，同函数不同参数 |
+| Test 3 | Mode 2 (Invoke-only) | `add(100, 200)` | 300 | 继续复用 |
+| Test 4 | Mode 2 (Invoke-only) | `multiply(4, 7)` | 28 | 复用模块，不同函数 |
+| Test 5 | Mode 2 (Invoke-only) | `get_answer()` | 42 | 复用模块，无参函数 |
+
+### 12.5 Phase 3b 执行流时序
+
+```
+Guest (VMPL2)              SVSM (VMPL0)              VMPL1
+    |                          |                        |
+    | create_zygote(elf)       |                        |
+    |------------------------->| early_invoke            |
+    |                          |----------------------->|
+    |                          |  heap_init + runtime_init
+    |                          |  pal_svsm_exit(0)      |
+    |                          |<-----------------------|
+    |  zygote created          |                        |
+    |<-------------------------|                        |
+    |                          |                        |
+    | create_trustlet(dummy)   |                        |
+    |------------------------->| CoW duplicate           |
+    |  trustlet created        |                        |
+    |<-------------------------|                        |
+    |                          |                        |
+    | invoke(wasm+"add"+[3,5]) |  [Mode 1]              |
+    |------------------------->| copy_into → resume      |
+    |                          |----------------------->|
+    |                          |  load module            |
+    |                          |  invoke add(3,5) → 8   |
+    |                          |  write output           |
+    |                          |  get_result             |
+    |                          |<-----------------------|
+    |  result: 8               |                        |
+    |<-------------------------|                        |
+    |                          |                        |
+    | invoke("add"+[10,20])    |  [Mode 2]              |
+    |------------------------->| copy_into → resume      |
+    |                          |----------------------->|
+    |                          |  (skip load, reuse)     |
+    |                          |  invoke add(10,20) → 30|
+    |                          |  write output           |
+    |                          |  get_result             |
+    |                          |<-----------------------|
+    |  result: 30              |                        |
+    |<-------------------------|                        |
+    |                          |                        |
+    | invoke("multiply"+[4,7]) |  [Mode 2]              |
+    |------------------------->| copy_into → resume      |
+    |                          |----------------------->|
+    |                          |  invoke multiply → 28  |
+    |                          |  write output           |
+    |                          |  get_result             |
+    |                          |<-----------------------|
+    |  result: 28              |                        |
+    |<-------------------------|                        |
+```
+
+### 12.6 修改文件清单
+
+| 文件 | 改动内容 |
+|------|---------|
+| `wamr-pal/mpk_allocator_vmpl1.c` | `mpk_domain_destroy()` 中新增 `pal_svsm_mpk_free_pkey()` 调用，归还 pkey 给 SVSM |
+| `wamr-pal/wamr_pal_main.c` | 主循环支持三种模式（Mode 1/2/3），新增 `g_wasm_buf` 全局变量跟踪模块状态 |
+| `module/example/test_wamr.py` | 新增 `pack_input_invoke_only()` + 5 个测试用例验证模块复用 |
+| `wamr-pal/Phase3_设计与验证文档.md` | 更新 Phase 3b 实现章节 |
+
+### 12.7 验证步骤
+
+1. 宿主机编译：`cd wamr-pal && make clean && make && make deploy`
+2. 启动 Guest VM：`make run`
+3. Guest 内执行：`python3 test_wamr.py`
+   - 验证 Test 1（Mode 1: Load + Invoke）成功
+   - 验证 Test 2-5（Mode 2: Invoke-only 复用模块）成功
+4. 多次运行验证 pkey 不再耗尽：连续执行 20+ 次 `python3 test_wamr.py`
+5. 检查 SVSM 串口日志确认：
+   - 首次调用有 `mpk_domain_create` + `Module loaded`
+   - 后续调用无 `mpk_domain_create`，直接 `Invoking`
+   - `mpk_free_pkey` 日志确认 pkey 归还成功
 
 ## 十三、Phase 4 展望
 
