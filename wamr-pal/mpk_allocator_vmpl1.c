@@ -449,19 +449,31 @@ void mpk_domain_destroy(mpk_domain_t *domain)
         domain->module_msp = (void *)0;
     }
 
-    /* Free memory region (with correct pkey for proper cleanup) */
-    mpk_region_unmap_pkey(domain->region_base, domain->region_size, domain->pkey);
-
+    /* 保存域信息用于一步释放 */
     int pkey = domain->pkey;
+    void *region_base = domain->region_base;
+    size_t region_size = domain->region_size;
 
     domain->region_base = (void *)0;
     domain->region_size = 0;
     domain->pkey = 0;
 
-    /* 归还 PKEY 到池 */
+    /* 归还 PKEY 到 VMPL1 本地池 */
     pkey_pool_free(pkey);
 
-    pal_svsm_debug_print("[MPK] Domain destroyed: pkey=");
+    /* 一步完成：释放内存 + 删除 SVSM allocations 记录 + 归还 pkey 给 SVSM
+     * 这等价于 wasmlet 原始项目的 munmap() + pkey_pool_free() 流程。
+     * 传入实际的 region_base 和 region_size，让 SVSM 同时清理物理页和 allocations 记录。 */
+    int free_ret = pal_svsm_mpk_free_pkey((uint32_t)pkey, region_base, (uint64_t)region_size);
+    if (free_ret != 0) {
+        pal_svsm_debug_print("[MPK] WARNING: pal_svsm_mpk_free_pkey failed for pkey=");
+        pal_svsm_debug_print_dec(pkey);
+        pal_svsm_debug_print(", ret=");
+        pal_svsm_debug_print_dec(free_ret);
+        pal_svsm_debug_print("\n");
+    }
+
+    pal_svsm_debug_print("[MPK] Domain destroyed (memory+pkey freed via SVSM): pkey=");
     pal_svsm_debug_print_dec(pkey);
     pal_svsm_debug_print("\n");
 }
