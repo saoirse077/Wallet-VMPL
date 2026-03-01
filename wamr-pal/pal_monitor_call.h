@@ -175,6 +175,39 @@ uint32_t pal_svsm_mpk_query_pkru(void);
  */
 void pal_svsm_get_result(void);
 
+/* ========== Thread management (VMPL0 managed) ========== */
+
+/*
+ * Create a thread (allocate VMSA, execution deferred until join)
+ * Call number: 0x4FFFFFEC
+ * Parameters:
+ *   entry_rip  - thread entry function address
+ *   stack_top  - top of the pre-allocated stack (grows downward)
+ *   gs_base    - GS segment base for TLS (TCB address)
+ *   arg        - single uint64_t argument passed in RDI
+ * Returns: thread id (0..7), or UINT64_MAX on error
+ */
+uint64_t pal_svsm_thread_create(uint64_t entry_rip, uint64_t stack_top,
+                                 uint64_t gs_base, uint64_t arg);
+
+/*
+ * Join a thread (blocks until thread calls thread_exit)
+ * Call number: 0x4FFFFFEB
+ * Parameters:
+ *   tid - thread id from thread_create
+ * Returns: exit code from the thread
+ */
+uint64_t pal_svsm_thread_join(uint64_t tid);
+
+/*
+ * Exit current thread (called from within a thread)
+ * Call number: 0x4FFFFFEA
+ * Parameters:
+ *   exit_code - value returned to the joiner
+ * Does not return.
+ */
+void pal_svsm_thread_exit(uint64_t exit_code);
+
 /* ========== Memory Channel management ========== */
 
 /*

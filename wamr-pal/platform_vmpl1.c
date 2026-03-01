@@ -2,9 +2,9 @@
  * @file platform_vmpl1.c
  * @brief VMPL1 (bare-metal) implementation of wasmlet platform abstraction layer
  *
- * TLS: global array (single-threaded initially, GS.base TCB later)
+ * TLS: per-thread TCB accessed via GS.base
  * Mutex: pal_spinlock_t
- * Thread: stubs (single-threaded initially, SVSM thread_create later)
+ * Thread: SVSM thread_create/join/exit monitor calls
  * MPK: SVSM monitor calls
  * Time: RDTSC
  * Logging: pal_svsm_debug_print
@@ -15,35 +15,69 @@
 #include "pal_spinlock.h"
 #include "pal_string.h"
 
-/* ============ TLS (global array, single-threaded) ============ */
+/* ============ TCB (Thread Control Block, pointed to by GS.base) ============ */
 
-static void *tls_slots[WASMLET_TLS_MAX_KEYS];
-static int   tls_next_key = 0;
+struct thread_tcb {
+    struct thread_tcb *self;
+    uint64_t           thread_id;
+    void              *tls_slots[WASMLET_TLS_MAX_KEYS];
+};
+
+static struct thread_tcb main_tcb;
+static int               tls_next_key = 0;
+
+static void set_gs_base(struct thread_tcb *tcb) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFFA;
+    data.rbx = (uint64_t)tcb;
+    data.rcx = 0;
+    data.rdx = 0;
+    monitor_call(&data);
+}
+
+static inline struct thread_tcb *get_tcb(void) {
+    struct thread_tcb *p;
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(p));
+    return p;
+}
+
+static int gs_initialized = 0;
+
+static void ensure_main_tcb(void) {
+    if (gs_initialized)
+        return;
+    memset(&main_tcb, 0, sizeof(main_tcb));
+    main_tcb.self = &main_tcb;
+    set_gs_base(&main_tcb);
+    gs_initialized = 1;
+}
+
+/* ============ TLS (per-thread via GS.base TCB) ============ */
 
 int wasmlet_tls_create(wasmlet_tls_key_t *key) {
+    ensure_main_tcb();
     if (!key || tls_next_key >= WASMLET_TLS_MAX_KEYS)
         return -1;
-    int idx = tls_next_key++;
-    tls_slots[idx] = (void *)0;
-    *key = idx;
+    *key = tls_next_key++;
     return 0;
 }
 
 void wasmlet_tls_delete(wasmlet_tls_key_t key) {
-    if (key >= 0 && key < WASMLET_TLS_MAX_KEYS)
-        tls_slots[key] = (void *)0;
+    (void)key;
 }
 
 void *wasmlet_tls_get(wasmlet_tls_key_t key) {
     if (key < 0 || key >= WASMLET_TLS_MAX_KEYS)
         return (void *)0;
-    return tls_slots[key];
+    struct thread_tcb *tcb = get_tcb();
+    return tcb->tls_slots[key];
 }
 
 int wasmlet_tls_set(wasmlet_tls_key_t key, void *value) {
     if (key < 0 || key >= WASMLET_TLS_MAX_KEYS)
         return -1;
-    tls_slots[key] = value;
+    struct thread_tcb *tcb = get_tcb();
+    tcb->tls_slots[key] = value;
     return 0;
 }
 
@@ -74,27 +108,94 @@ void wasmlet_mutex_destroy(wasmlet_mutex_t *m) {
     (void)m;
 }
 
-/* ============ Thread (stubs, single-threaded) ============ */
+/* ============ Thread (SVSM thread_create/join/exit) ============ */
+
+#define THREAD_STACK_DEFAULT_SIZE  (64 * 1024)
+#define THREAD_STACK_REGION_START  0x70000000000ULL   /* 7TB, dedicated for thread stacks */
+
+struct thread_start_info {
+    void *(*start_fn)(void *);
+    void  *user_arg;
+};
+
+static uint64_t next_stack_addr = THREAD_STACK_REGION_START;
+
+/*
+ * Thread entry point. SVSM sets RDI = arg (pointer to thread_start_info),
+ * RSP = stack_top, GS.base = TCB address.
+ */
+static void __attribute__((noinline, used))
+thread_entry(struct thread_start_info *info) {
+    void *ret = info->start_fn(info->user_arg);
+    pal_svsm_thread_exit((uint64_t)(uintptr_t)ret);
+    __builtin_unreachable();
+}
 
 int wasmlet_thread_create(wasmlet_thread_t *t,
                           void *(*start)(void *), void *arg,
                           uint32_t stack_size) {
-    (void)t; (void)start; (void)arg; (void)stack_size;
-    return -1;  /* not supported yet */
+    ensure_main_tcb();
+    if (!t || !start)
+        return -1;
+
+    if (stack_size == 0)
+        stack_size = THREAD_STACK_DEFAULT_SIZE;
+    uint64_t aligned = (stack_size + 0xFFF) & ~0xFFFULL;
+    /* Reserve extra page for TCB + start_info at the bottom */
+    uint64_t total = aligned + 0x1000;
+
+    void *base = (void *)next_stack_addr;
+    next_stack_addr += total;
+
+    int ret = pal_svsm_virt_alloc(base, total, 0x3 /* RW */);
+    if (ret != 0)
+        return -1;
+    memset(base, 0, total);
+
+    /* TCB at the very beginning of the region */
+    struct thread_tcb *tcb = (struct thread_tcb *)base;
+    tcb->self = tcb;
+
+    /* start_info right after TCB */
+    struct thread_start_info *info =
+        (struct thread_start_info *)((uint8_t *)tcb + sizeof(*tcb));
+    info->start_fn = start;
+    info->user_arg = arg;
+
+    uint64_t stack_top = (uint64_t)base + total;
+
+    uint64_t tid = pal_svsm_thread_create(
+        (uint64_t)thread_entry,
+        stack_top,
+        (uint64_t)tcb,
+        (uint64_t)info
+    );
+
+    if (tid == UINT64_MAX)
+        return -1;
+
+    tcb->thread_id = tid;
+    *t = tid;
+    return 0;
 }
 
 int wasmlet_thread_join(wasmlet_thread_t t, void **retval) {
-    (void)t; (void)retval;
-    return -1;
+    uint64_t code = pal_svsm_thread_join(t);
+    if (retval)
+        *retval = (void *)(uintptr_t)code;
+    return 0;
 }
 
 uint64_t wasmlet_thread_self(void) {
-    return 0;  /* main thread */
+    if (!gs_initialized)
+        return 0;
+    struct thread_tcb *tcb = get_tcb();
+    return tcb->thread_id;
 }
 
 void wasmlet_thread_exit(void *retval) {
-    (void)retval;
-    pal_svsm_exit(0);
+    pal_svsm_thread_exit((uint64_t)(uintptr_t)retval);
+    __builtin_unreachable();
 }
 
 /* ============ MPK Primitives (SVSM monitor calls) ============ */

@@ -13,6 +13,7 @@
 #include "pal_malloc.h"
 #include "pal_string.h"
 #include "wasmlet.h"
+#include "wasmlet_platform.h"
 
 #define INPUT_CHANNEL_ADDR   0x28000000000ULL
 #define OUTPUT_CHANNEL_ADDR  0x30000000000ULL
@@ -58,6 +59,64 @@ static void print_pkru(const char *label) {
 static uint32_t g_module_id = 0;
 static int g_module_loaded = 0;
 
+/* ---- Thread smoke test ---- */
+
+static volatile uint64_t shared_result = 0;
+
+static void *thread_worker(void *arg) {
+    uint64_t val = (uint64_t)(uintptr_t)arg;
+    pal_svsm_debug_print("[THREAD-TEST] Worker running, arg=");
+    pal_svsm_debug_print_dec((int)val);
+    pal_svsm_debug_print("\n");
+
+    shared_result = val * val;
+
+    pal_svsm_debug_print("[THREAD-TEST] Worker computed result=");
+    pal_svsm_debug_print_dec((int)shared_result);
+    pal_svsm_debug_print("\n");
+
+    return (void *)(uintptr_t)(val + 1);
+}
+
+static void thread_smoke_test(void) {
+    wasmlet_thread_t tid;
+    int ret = wasmlet_thread_create(&tid, thread_worker, (void *)7, 0);
+    if (ret != 0) {
+        pal_svsm_debug_print("[THREAD-TEST] FAIL: thread_create returned error\n");
+        pal_svsm_exit(1);
+        return;
+    }
+    pal_svsm_debug_print("[THREAD-TEST] Created thread id=");
+    pal_svsm_debug_print_dec((int)tid);
+    pal_svsm_debug_print("\n");
+
+    void *retval = (void *)0;
+    ret = wasmlet_thread_join(tid, &retval);
+    if (ret != 0) {
+        pal_svsm_debug_print("[THREAD-TEST] FAIL: thread_join returned error\n");
+        pal_svsm_exit(1);
+        return;
+    }
+
+    pal_svsm_debug_print("[THREAD-TEST] Join returned, retval=");
+    pal_svsm_debug_print_dec((int)(uintptr_t)retval);
+    pal_svsm_debug_print("\n");
+
+    if (shared_result != 49) {
+        pal_svsm_debug_print("[THREAD-TEST] FAIL: shared_result != 49\n");
+        pal_svsm_exit(1);
+        return;
+    }
+    if ((uint64_t)(uintptr_t)retval != 8) {
+        pal_svsm_debug_print("[THREAD-TEST] FAIL: retval != 8\n");
+        pal_svsm_exit(1);
+        return;
+    }
+    pal_svsm_debug_print("[THREAD-TEST] All assertions passed\n");
+}
+
+/* ---- End thread smoke test ---- */
+
 void wamr_pal_main(void)
 {
     int ret;
@@ -98,6 +157,12 @@ void wamr_pal_main(void)
     }
     pal_svsm_debug_print("[WAMR-PAL] Runtime initialized\n");
     PRINT_PKRU("after runtime_init");
+
+    /* ---- Thread smoke test ---- */
+    pal_svsm_debug_print("[THREAD-TEST] Starting thread test...\n");
+    thread_smoke_test();
+    pal_svsm_debug_print("[THREAD-TEST] Thread test passed!\n");
+    /* ---- End thread test ---- */
 
     pal_svsm_debug_print("[WAMR-PAL] Initialization complete, suspending...\n");
     pal_svsm_exit(0);

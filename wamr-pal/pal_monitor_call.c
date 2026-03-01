@@ -233,7 +233,39 @@ int pal_svsm_inflate_channel(int select, uint64_t size) {
     data.rcx = (uint64_t)select;
     data.rdx = size;
     monitor_call(&data);
-    /* SVSM's pal_svsm_inflate_channel always returns true,
-     * so rcx is not modified to indicate error. Return 0 (success). */
     return 0;
+}
+
+/* ========== Thread management ========== */
+
+uint64_t pal_svsm_thread_create(uint64_t entry_rip, uint64_t stack_top,
+                                 uint64_t gs_base, uint64_t arg) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFEC;
+    data.rbx = entry_rip;
+    data.rcx = stack_top;
+    data.rdx = gs_base;
+    data.r8  = arg;
+    data.r9  = 0;
+    extended_monitor_call(&data);
+    return data.rax;
+}
+
+uint64_t pal_svsm_thread_join(uint64_t tid) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFEB;
+    data.rbx = tid;
+    data.rcx = 0;
+    data.rdx = 0;
+    monitor_call(&data);
+    return data.rax;
+}
+
+void pal_svsm_thread_exit(uint64_t exit_code) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFEA;
+    data.rbx = exit_code;
+    data.rcx = 0;
+    data.rdx = 0;
+    monitor_call(&data);
 }
