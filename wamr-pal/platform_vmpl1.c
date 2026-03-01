@@ -132,7 +132,14 @@ void *wasmlet_mem_map(size_t size, int pkey) {
         return (void *)0;
     }
 
-    memset(addr, 0, size);
+    /*
+     * Only zero-fill pkey==0 memory (accessible without PKRU change).
+     * pkey>0 pages are zero-filled by SVSM on allocation; the caller
+     * must enter the domain (update PKRU) before accessing them.
+     */
+    if (pkey == 0) {
+        memset(addr, 0, size);
+    }
     return addr;
 }
 
@@ -145,8 +152,16 @@ void wasmlet_pkru_reset(int pkey) {
 }
 
 void wasmlet_mem_unmap(void *addr, size_t size) {
-    if (addr && size > 0)
-        pal_svsm_mpk_free(addr, (uint64_t)size);
+    /*
+     * pkey=0 regions are allocated via pal_svsm_virt_alloc and NOT tracked
+     * by SVSM's MpkMemoryManager.  There is no pal_svsm_virt_free, so we
+     * skip the free; SVSM reclaims all Trustlet resources at exit.
+     *
+     * pkey>0 regions are freed via wasmlet_pkey_free (mpk_free_pkey),
+     * not through this function, so nothing to do here.
+     */
+    (void)addr;
+    (void)size;
 }
 
 void wasmlet_pkey_free(int pkey, void *addr, size_t size) {
@@ -160,20 +175,16 @@ void wasmlet_mem_reset(void *addr, size_t size) {
 
 int wasmlet_mem_set_pkey(void *addr, size_t size, int pkey) {
     /*
-     * On VMPL1, re-tagging memory with a different pkey requires
-     * freeing and re-allocating with the new pkey. For the exec heap
-     * use case, SVSM's mpk_alloc handles this.
-     * Simplified: free old mapping, re-alloc with new pkey.
+     * SVSM does not support re-tagging existing pages with a different pkey
+     * (free + realloc at the same VA panics the page allocator).
+     * For the exec heap, keep it at pkey=0 which is always accessible
+     * regardless of PKRU state.  True per-domain exec isolation can be
+     * revisited once SVSM adds pkey_mprotect support.
      */
-    size = (size + 0xFFF) & ~0xFFFULL;
-
-    pal_svsm_mpk_free(addr, (uint64_t)size);
-
-    if (pkey > 0) {
-        return pal_svsm_mpk_alloc(addr, (uint64_t)size, (uint32_t)pkey);
-    } else {
-        return pal_svsm_virt_alloc(addr, (uint64_t)size, 0x3);
-    }
+    (void)addr;
+    (void)size;
+    (void)pkey;
+    return 0;
 }
 
 /* ============ Time (RDTSC based) ============ */

@@ -30,7 +30,7 @@ BUILD_DIR    := build/wamr
 # Source files — PAL core
 # ============================================================================
 PAL_C_SRCS := pal_monitor_call.c pal_string.c pal_malloc.c \
-              mpk_allocator_vmpl1.c wasmlet_vmpl1.c wamr_pal_main.c
+              platform_vmpl1.c config_vmpl1.c wamr_pal_main.c
 
 PAL_S_SRCS := arch/x86_64/pal_start.S
 
@@ -39,6 +39,22 @@ PLATFORM_SRCS := $(PLATFORM_DIR)/vmpl1_platform.c \
                  $(PLATFORM_DIR)/vmpl1_thread.c \
                  $(PLATFORM_DIR)/vmpl1_time.c \
                  $(PLATFORM_DIR)/vmpl1_mmap.c
+
+# ---- wasmlet library sources (from wasmlet submodule) ----
+WASMLET_SRC_DIR := ../wasmlet/src
+WASMLET_INC_DIR := ../wasmlet/include
+WASMLET_C_SRCS := \
+    $(WASMLET_SRC_DIR)/core/wasmlet.c \
+    $(WASMLET_SRC_DIR)/core/runtime_internal.c \
+    $(WASMLET_SRC_DIR)/core/module_internal.c \
+    $(WASMLET_SRC_DIR)/core/result_store.c \
+    $(WASMLET_SRC_DIR)/isolation/mpk_allocator.c \
+    $(WASMLET_SRC_DIR)/isolation/wamr_adaptor.c \
+    $(WASMLET_SRC_DIR)/threadpool/lockfree_queue.c \
+    $(WASMLET_SRC_DIR)/threadpool/thread_pool.c \
+    $(WASMLET_SRC_DIR)/utils/logging.c
+
+WASMLET_BUILD_DIR := build/wasmlet
 
 # ---- dlmalloc ----
 DLMALLOC_SRC := $(DLMALLOC_DIR)/malloc.c
@@ -101,12 +117,13 @@ PAL_C_OBJS     := $(PAL_C_SRCS:.c=.o)
 PAL_S_OBJS     := $(PAL_S_SRCS:.S=.o)
 PLATFORM_OBJS  := $(PLATFORM_SRCS:.c=.o)
 
-# WAMR objects go into build/wamr/ subdirectory to avoid name clashes
 WAMR_C_OBJS    := $(patsubst $(WAMR_DIR)/%.c,$(BUILD_DIR)/%.o,$(WAMR_C_SRCS))
 WAMR_ASM_OBJS  := $(patsubst $(WAMR_DIR)/%.s,$(BUILD_DIR)/%.o,$(WAMR_ASM_SRCS))
 
+WASMLET_OBJS   := $(patsubst $(WASMLET_SRC_DIR)/%.c,$(WASMLET_BUILD_DIR)/%.o,$(WASMLET_C_SRCS))
+
 ALL_OBJS := $(PAL_S_OBJS) $(PAL_C_OBJS) $(PLATFORM_OBJS) $(DLMALLOC_OBJ) \
-            $(WAMR_C_OBJS) $(WAMR_ASM_OBJS)
+            $(WAMR_C_OBJS) $(WAMR_ASM_OBJS) $(WASMLET_OBJS)
 
 # ============================================================================
 # Compiler flags
@@ -114,7 +131,7 @@ ALL_OBJS := $(PAL_S_OBJS) $(PAL_C_OBJS) $(PLATFORM_OBJS) $(DLMALLOC_OBJ) \
 
 GCC_INCLUDE := $(shell $(CC) -print-file-name=include)
 
-# Include paths for WAMR headers
+# Include paths for WAMR and wasmlet headers
 WAMR_INCLUDES := \
     -I$(PLATFORM_DIR) \
     -I$(WAMR_DIR)/core/shared/platform/include \
@@ -125,6 +142,12 @@ WAMR_INCLUDES := \
     -I$(WAMR_DIR)/core/iwasm/common \
     -I$(WAMR_DIR)/core/iwasm/interpreter \
     -I$(WAMR_DIR)/core
+
+# wasmlet include paths (public + internal headers)
+WASMLET_INCLUDES := \
+    -I$(WASMLET_INC_DIR) \
+    -I$(WASMLET_SRC_DIR)/core \
+    -I$(DLMALLOC_DIR)
 
 # Base CFLAGS (bare-metal, no libc)
 CFLAGS := -nostdlib -nostdinc -ffreestanding \
@@ -236,9 +259,9 @@ $(TARGET): $(ALL_OBJS) $(LDSCRIPT)
 # Compile rules
 # ============================================================================
 
-# PAL core C sources (needs WAMR includes for wasm_export.h in wasmlet_vmpl1.c)
+# PAL core C sources (needs WAMR + wasmlet includes)
 %.o: %.c
-	$(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(WASMLET_INCLUDES) $(WAMR_INCLUDES) $(WAMR_DEFS) -I. -c -o $@ $<
 
 # WAMR platform C sources (needs WAMR include paths)
 $(PLATFORM_DIR)/%.o: $(PLATFORM_DIR)/%.c $(PLATFORM_DIR)/platform_internal.h
@@ -251,6 +274,12 @@ arch/x86_64/%.o: arch/x86_64/%.S
 # dlmalloc with special flags
 $(DLMALLOC_OBJ): $(DLMALLOC_SRC) pal_dlmalloc_config.h
 	$(CC) $(CFLAGS) $(DLMALLOC_DEFS) -I. -include pal_dlmalloc_config.h -Wno-expansion-to-defined -c -o $@ $<
+
+# wasmlet library sources → build/wasmlet/*.o
+# -isystem wasmlet-compat prioritises compat shim headers over system headers.
+$(WASMLET_BUILD_DIR)/%.o: $(WASMLET_SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -isystem wasmlet-compat $(WASMLET_INCLUDES) $(WAMR_INCLUDES) $(WAMR_DEFS) -DUSE_MPK_ALLOCATOR -I. -c -o $@ $<
 
 # WAMR C sources → build/wamr/*.o
 # -Iinclude-shim provides string.h/assert.h shims for WAMR headers that
@@ -272,7 +301,7 @@ $(BUILD_DIR)/%.o: $(WAMR_DIR)/%.s
 clean:
 	rm -f $(PAL_C_OBJS) $(PAL_S_OBJS) $(DLMALLOC_OBJ) $(TARGET)
 	rm -f $(PLATFORM_DIR)/*.o
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) $(WASMLET_BUILD_DIR)
 
 # Deploy the ELF and WASM test module to module/example/ for guest access via 9p mount.
 deploy: $(TARGET)
