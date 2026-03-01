@@ -91,7 +91,7 @@ int pal_heap_init(void)
     memset((void *)HEAP_BASE_ADDR, 0, HEAP_SIZE);
 
     /* Create dlmalloc mspace on top of the allocated memory */
-    g_mspace = create_mspace_with_base((void *)HEAP_BASE_ADDR, HEAP_SIZE, 0);
+    g_mspace = create_mspace_with_base((void *)HEAP_BASE_ADDR, HEAP_SIZE, 1);
     if (!g_mspace) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: create_mspace_with_base failed\n");
         return -1;

@@ -72,4 +72,27 @@ char* invoke_trustlet(const int trustlet_id, char* args, uint64_t output_size);
 char* invoke_trustlet_bin(const int trustlet_id, void* args, uint64_t args_size, uint64_t output_size);
 int delete_trustlet(const int trustlet_id);
 void create_channel(const int trustlet_id_1, const int trustlet_id_2);
+
+#define TRUSTLET_CMD_SYNC_INVOKE  0
+#define TRUSTLET_CMD_LOAD_MODULE  1
+#define TRUSTLET_CMD_SUBMIT_TASK  2
+#define TRUSTLET_CMD_GET_RESULT   3
+#define TRUSTLET_CMD_DESTROY      0xFF
+
+#define TRUSTLET_RESULT_PENDING   0xFD
+
+int trustlet_load_module(int trustlet_id,
+                         const void *wasm_data, uint64_t wasm_size,
+                         uint32_t *module_id);
+
+int trustlet_submit_task(int trustlet_id, uint32_t module_id,
+                         const char *func_name,
+                         const uint32_t *argv, uint16_t argc,
+                         uint32_t *request_id);
+
+int trustlet_get_result(int trustlet_id, uint32_t request_id,
+                        uint32_t *out_status, uint32_t *out_value);
+
+int trustlet_destroy_runtime(int trustlet_id);
+
 #endif // TRUSTLET_H_

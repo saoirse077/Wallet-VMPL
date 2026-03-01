@@ -24,7 +24,7 @@ struct input_header {
     uint32_t wasm_size;
     uint32_t func_name_len;
     uint16_t argc;
-    uint16_t reserved;
+    uint16_t command;
 };
 
 static inline uint32_t align4(uint32_t v) {
@@ -59,63 +59,10 @@ static void print_pkru(const char *label) {
 static uint32_t g_module_id = 0;
 static int g_module_loaded = 0;
 
-/* ---- Thread smoke test ---- */
-
-static volatile uint64_t shared_result = 0;
-
-static void *thread_worker(void *arg) {
-    uint64_t val = (uint64_t)(uintptr_t)arg;
-    pal_svsm_debug_print("[THREAD-TEST] Worker running, arg=");
-    pal_svsm_debug_print_dec((int)val);
-    pal_svsm_debug_print("\n");
-
-    shared_result = val * val;
-
-    pal_svsm_debug_print("[THREAD-TEST] Worker computed result=");
-    pal_svsm_debug_print_dec((int)shared_result);
-    pal_svsm_debug_print("\n");
-
-    return (void *)(uintptr_t)(val + 1);
-}
-
-static void thread_smoke_test(void) {
-    wasmlet_thread_t tid;
-    int ret = wasmlet_thread_create(&tid, thread_worker, (void *)7, 0);
-    if (ret != 0) {
-        pal_svsm_debug_print("[THREAD-TEST] FAIL: thread_create returned error\n");
-        pal_svsm_exit(1);
-        return;
-    }
-    pal_svsm_debug_print("[THREAD-TEST] Created thread id=");
-    pal_svsm_debug_print_dec((int)tid);
-    pal_svsm_debug_print("\n");
-
-    void *retval = (void *)0;
-    ret = wasmlet_thread_join(tid, &retval);
-    if (ret != 0) {
-        pal_svsm_debug_print("[THREAD-TEST] FAIL: thread_join returned error\n");
-        pal_svsm_exit(1);
-        return;
-    }
-
-    pal_svsm_debug_print("[THREAD-TEST] Join returned, retval=");
-    pal_svsm_debug_print_dec((int)(uintptr_t)retval);
-    pal_svsm_debug_print("\n");
-
-    if (shared_result != 49) {
-        pal_svsm_debug_print("[THREAD-TEST] FAIL: shared_result != 49\n");
-        pal_svsm_exit(1);
-        return;
-    }
-    if ((uint64_t)(uintptr_t)retval != 8) {
-        pal_svsm_debug_print("[THREAD-TEST] FAIL: retval != 8\n");
-        pal_svsm_exit(1);
-        return;
-    }
-    pal_svsm_debug_print("[THREAD-TEST] All assertions passed\n");
-}
-
-/* ---- End thread smoke test ---- */
+static void handle_sync_invoke(struct input_header *hdr, volatile uint8_t *input);
+static void handle_load_module(struct input_header *hdr, volatile uint8_t *input);
+static void handle_submit_task(struct input_header *hdr, volatile uint8_t *input);
+static void handle_get_result(struct input_header *hdr, volatile uint8_t *input);
 
 void wamr_pal_main(void)
 {
@@ -136,10 +83,14 @@ void wamr_pal_main(void)
         while (1) {}
     }
 
-    /* Create config: max_threads=0 means no thread pool (single-threaded) */
+    uint64_t thread_capacity = pal_svsm_query_thread_capacity();
+    pal_svsm_debug_print("[WAMR-PAL] Thread capacity: ");
+    pal_svsm_debug_print_dec((int)thread_capacity);
+    pal_svsm_debug_print("\n");
+
     wasmlet_config_t config;
     memset(&config, 0, sizeof(config));
-    config.max_threads = 0;
+    config.max_threads = (uint32_t)(thread_capacity > 0 ? thread_capacity : 0);
     config.thread_stack_size = 32 * 1024;
     config.max_heap_size = 32 * 1024;
     config.lf_queue_size = 64;
@@ -158,20 +109,15 @@ void wamr_pal_main(void)
     pal_svsm_debug_print("[WAMR-PAL] Runtime initialized\n");
     PRINT_PKRU("after runtime_init");
 
-    /* ---- Thread smoke test ---- */
-    pal_svsm_debug_print("[THREAD-TEST] Starting thread test...\n");
-    thread_smoke_test();
-    pal_svsm_debug_print("[THREAD-TEST] Thread test passed!\n");
-    /* ---- End thread test ---- */
-
     pal_svsm_debug_print("[WAMR-PAL] Initialization complete, suspending...\n");
     pal_svsm_exit(0);
 
-    /* Phase B: Invocation loop */
+    /* Phase B: Command dispatch loop */
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] Entered invocation loop\n");
+    pal_svsm_debug_print("[WAMR-PAL] Entered command dispatch loop\n");
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
+    int should_exit = 0;
     for (;;) {
         volatile uint8_t *input = (volatile uint8_t *)INPUT_CHANNEL_ADDR;
 
@@ -179,136 +125,209 @@ void wamr_pal_main(void)
         hdr.wasm_size     = *(volatile uint32_t *)(input + 0);
         hdr.func_name_len = *(volatile uint32_t *)(input + 4);
         hdr.argc          = *(volatile uint16_t *)(input + 8);
+        hdr.command        = *(volatile uint16_t *)(input + 10);
 
-        pal_svsm_debug_print("[WAMR-PAL] Input: wasm_size=");
-        pal_svsm_debug_print_dec((int)hdr.wasm_size);
-        pal_svsm_debug_print(", func_name_len=");
-        pal_svsm_debug_print_dec((int)hdr.func_name_len);
-        pal_svsm_debug_print(", argc=");
-        pal_svsm_debug_print_dec((int)hdr.argc);
-        pal_svsm_debug_print("\n");
-
-        /* Mode 3: Shutdown */
-        if (hdr.wasm_size == 0 && hdr.func_name_len == 0) {
-            pal_svsm_debug_print("[WAMR-PAL] Received shutdown signal\n");
+        switch (hdr.command) {
+        case 0:
+            handle_sync_invoke(&hdr, input);
+            break;
+        case 1:
+            handle_load_module(&hdr, input);
+            break;
+        case 2:
+            handle_submit_task(&hdr, input);
+            break;
+        case 3:
+            handle_get_result(&hdr, input);
+            break;
+        case 0xFF:
+            pal_svsm_debug_print("[WAMR-PAL] DESTROY: stopping runtime...\n");
+            wasmlet_runtime_destroy();
+            write_output_channel(0, 0);
+            should_exit = 1;
+            break;
+        default:
+            pal_svsm_debug_print("[WAMR-PAL] Unknown command\n");
+            write_output_channel(0xFF, 0);
             break;
         }
 
-        if (hdr.func_name_len == 0 || hdr.func_name_len > MAX_FUNC_NAME_LEN) {
-            pal_svsm_debug_print("[WAMR-PAL] ERROR: invalid func_name_len\n");
-            write_output_channel(1, 0);
-            pal_svsm_get_result();
-            continue;
-        }
-
-        /* Read function name */
-        char func_name[MAX_FUNC_NAME_LEN + 1];
-        uint32_t offset = INPUT_HEADER_SIZE;
-        for (uint32_t i = 0; i < hdr.func_name_len; i++) {
-            func_name[i] = (char)input[offset + i];
-        }
-        func_name[hdr.func_name_len] = '\0';
-        offset += hdr.func_name_len;
-        offset = align4(offset);
-
-        /* Read arguments */
-        uint32_t argv[16];
-        uint16_t argc = hdr.argc;
-        if (argc > 16) argc = 16;
-        for (uint16_t i = 0; i < argc; i++) {
-            argv[i] = *(volatile uint32_t *)(input + offset);
-            offset += 4;
-        }
-
-        /* Mode 1: Load new module + invoke */
-        if (hdr.wasm_size > 0) {
-            pal_svsm_debug_print("[WAMR-PAL] Mode 1: Load + invoke\n");
-
-            if (g_module_loaded) {
-                wasmlet_unload(g_module_id);
-                g_module_loaded = 0;
-            }
-
-            /* Copy WASM bytecode to heap (WAMR modifies buffer in-place) */
-            uint32_t wasm_size = hdr.wasm_size;
-            uint8_t *wasm_buf = (uint8_t *)pal_malloc(wasm_size);
-            if (!wasm_buf) {
-                pal_svsm_debug_print("[WAMR-PAL] ERROR: malloc wasm buffer failed\n");
-                write_output_channel(2, 0);
-                pal_svsm_get_result();
-                continue;
-            }
-            for (uint32_t i = 0; i < wasm_size; i++) {
-                wasm_buf[i] = input[offset + i];
-            }
-
-            PRINT_PKRU("before wasmlet_init");
-            ret = wasmlet_init(wasm_buf, wasm_size, &g_module_id);
-            pal_free(wasm_buf);
-
-            if (ret != 0) {
-                pal_svsm_debug_print("[WAMR-PAL] ERROR: wasmlet_init failed\n");
-                write_output_channel(3, 0);
-                pal_svsm_get_result();
-                continue;
-            }
-            g_module_loaded = 1;
-            pal_svsm_debug_print("[WAMR-PAL] Module loaded OK\n");
-            PRINT_PKRU("after wasmlet_init");
-        } else {
-            /* Mode 2: Invoke-only */
-            pal_svsm_debug_print("[WAMR-PAL] Mode 2: Invoke-only\n");
-
-            if (!g_module_loaded) {
-                pal_svsm_debug_print("[WAMR-PAL] ERROR: No module loaded\n");
-                write_output_channel(5, 0);
-                pal_svsm_get_result();
-                continue;
-            }
-        }
-
-        /* Convert uint32 args to uint64 for wasmlet_run */
-        uint64_t args64[16];
-        for (uint16_t i = 0; i < argc; i++) {
-            args64[i] = (uint64_t)argv[i];
-        }
-
-        pal_svsm_debug_print("[WAMR-PAL] Invoking ");
-        pal_svsm_debug_print(func_name);
-        pal_svsm_debug_print("...\n");
-
-        execution_result_t result;
-        ret = wasmlet_run(g_module_id, func_name, args64, (uint32_t)argc, &result);
-
-        if (ret != 0 || result.status != EXEC_STATUS_SUCCESS) {
-            pal_svsm_debug_print("[WAMR-PAL] ERROR: wasmlet_run failed\n");
-            write_output_channel(4, 0);
-        } else {
-            pal_svsm_debug_print("[WAMR-PAL] Result: ");
-            pal_svsm_debug_print_dec((int)result.return_value);
-            pal_svsm_debug_print("\n");
-            write_output_channel(0, (uint32_t)result.return_value);
-        }
-        PRINT_PKRU("after invoke");
-
-        pal_svsm_debug_print("[WAMR-PAL] Calling pal_svsm_get_result()...\n");
         pal_svsm_get_result();
-        pal_svsm_debug_print("[WAMR-PAL] Resumed for next invocation\n");
+        if (should_exit) {
+            pal_svsm_exit(0);
+            break;
+        }
     }
-
-    /* Cleanup */
-    pal_svsm_debug_print("[WAMR-PAL] Shutting down...\n");
-    if (g_module_loaded) {
-        wasmlet_unload(g_module_id);
-        g_module_loaded = 0;
-    }
-    wasmlet_runtime_destroy();
-    PRINT_PKRU("after cleanup");
-
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] Complete. Exiting.\n");
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-
-    pal_svsm_exit(0);
     while (1) {}
+}
+
+/* ========== Command handlers ========== */
+
+static void handle_sync_invoke(struct input_header *hdr, volatile uint8_t *input)
+{
+    int ret;
+
+    /* Mode 3: Shutdown (legacy) */
+    if (hdr->wasm_size == 0 && hdr->func_name_len == 0) {
+        pal_svsm_debug_print("[WAMR-PAL] Legacy shutdown\n");
+        if (g_module_loaded) {
+            wasmlet_unload(g_module_id);
+            g_module_loaded = 0;
+        }
+        wasmlet_runtime_destroy();
+        write_output_channel(0, 0);
+        return;
+    }
+
+    if (hdr->func_name_len == 0 || hdr->func_name_len > MAX_FUNC_NAME_LEN) {
+        write_output_channel(1, 0);
+        return;
+    }
+
+    char func_name[MAX_FUNC_NAME_LEN + 1];
+    uint32_t offset = INPUT_HEADER_SIZE;
+    for (uint32_t i = 0; i < hdr->func_name_len; i++) {
+        func_name[i] = (char)input[offset + i];
+    }
+    func_name[hdr->func_name_len] = '\0';
+    offset += hdr->func_name_len;
+    offset = align4(offset);
+
+    uint32_t argv[16];
+    uint16_t argc = hdr->argc;
+    if (argc > 16) argc = 16;
+    for (uint16_t i = 0; i < argc; i++) {
+        argv[i] = *(volatile uint32_t *)(input + offset);
+        offset += 4;
+    }
+
+    if (hdr->wasm_size > 0) {
+        if (g_module_loaded) {
+            wasmlet_unload(g_module_id);
+            g_module_loaded = 0;
+        }
+        uint32_t wasm_size = hdr->wasm_size;
+        uint8_t *wasm_buf = (uint8_t *)pal_malloc(wasm_size);
+        if (!wasm_buf) {
+            write_output_channel(2, 0);
+            return;
+        }
+        for (uint32_t i = 0; i < wasm_size; i++) {
+            wasm_buf[i] = input[offset + i];
+        }
+        ret = wasmlet_init(wasm_buf, wasm_size, &g_module_id);
+        pal_free(wasm_buf);
+        if (ret != 0) {
+            write_output_channel(3, 0);
+            return;
+        }
+        g_module_loaded = 1;
+    } else {
+        if (!g_module_loaded) {
+            write_output_channel(5, 0);
+            return;
+        }
+    }
+
+    uint64_t args64[16];
+    for (uint16_t i = 0; i < argc; i++) {
+        args64[i] = (uint64_t)argv[i];
+    }
+
+    execution_result_t result;
+    ret = wasmlet_run(g_module_id, func_name, args64, (uint32_t)argc, &result);
+
+    if (ret != 0 || result.status != EXEC_STATUS_SUCCESS) {
+        write_output_channel(4, 0);
+    } else {
+        write_output_channel(0, (uint32_t)result.return_value);
+    }
+}
+
+static void handle_load_module(struct input_header *hdr, volatile uint8_t *input)
+{
+    uint32_t wasm_size = hdr->wasm_size;
+    if (wasm_size == 0) {
+        write_output_channel(1, 0);
+        return;
+    }
+
+    uint8_t *wasm_buf = (uint8_t *)pal_malloc(wasm_size);
+    if (!wasm_buf) {
+        write_output_channel(2, 0);
+        return;
+    }
+    for (uint32_t i = 0; i < wasm_size; i++) {
+        wasm_buf[i] = input[INPUT_HEADER_SIZE + i];
+    }
+
+    uint32_t module_id;
+    int ret = wasmlet_init(wasm_buf, wasm_size, &module_id);
+    pal_free(wasm_buf);
+
+    if (ret != 0) {
+        pal_svsm_debug_print("[WAMR-PAL] LOAD_MODULE failed\n");
+        write_output_channel(3, 0);
+    } else {
+        pal_svsm_debug_print("[WAMR-PAL] LOAD_MODULE ok, id=");
+        pal_svsm_debug_print_dec((int)module_id);
+        pal_svsm_debug_print("\n");
+        write_output_channel(0, module_id);
+    }
+}
+
+static void handle_submit_task(struct input_header *hdr, volatile uint8_t *input)
+{
+    uint32_t offset = INPUT_HEADER_SIZE;
+    uint32_t module_id = *(volatile uint32_t *)(input + offset);
+    offset += 4;
+
+    char func_name[256];
+    uint32_t name_len = hdr->func_name_len;
+    if (name_len == 0 || name_len > 255) {
+        write_output_channel(1, 0);
+        return;
+    }
+    for (uint32_t i = 0; i < name_len; i++) {
+        func_name[i] = (char)input[offset + i];
+    }
+    func_name[name_len] = '\0';
+    uint32_t name_padded = (name_len + 3) & ~(uint32_t)3;
+    offset += name_padded;
+
+    uint16_t argc = hdr->argc;
+    uint64_t args64[32];
+    for (uint16_t i = 0; i < argc && i < 32; i++) {
+        args64[i] = (uint64_t)(*(volatile uint32_t *)(input + offset));
+        offset += 4;
+    }
+
+    uint32_t request_id;
+    int ret = wasmlet_run_async(module_id, func_name, args64, argc, &request_id);
+    if (ret != 0) {
+        pal_svsm_debug_print("[WAMR-PAL] SUBMIT_TASK failed\n");
+        write_output_channel(4, 0);
+    } else {
+        pal_svsm_debug_print("[WAMR-PAL] SUBMIT_TASK ok, req_id=");
+        pal_svsm_debug_print_dec((int)request_id);
+        pal_svsm_debug_print("\n");
+        write_output_channel(0, request_id);
+    }
+}
+
+static void handle_get_result(struct input_header *hdr, volatile uint8_t *input)
+{
+    (void)hdr;
+    uint32_t request_id = *(volatile uint32_t *)(input + INPUT_HEADER_SIZE);
+
+    execution_result_t result;
+    int ret = wasmlet_get_result(request_id, &result);
+
+    if (ret == WASMLET_SUCCESS) {
+        write_output_channel(0, (uint32_t)result.return_value);
+    } else if (ret == WASMLET_ERROR_PENDING) {
+        write_output_channel(0xFD, 0);
+    } else {
+        write_output_channel((uint32_t)(-ret), 0);
+    }
 }

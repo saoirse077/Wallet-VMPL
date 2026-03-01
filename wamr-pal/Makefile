@@ -232,7 +232,8 @@ DLMALLOC_DEFS := \
     -DLACKS_SYS_TYPES_H \
     -Dmalloc_getpagesize=4096 \
     '-DABORT=pal_svsm_exit(1)' \
-    '-DMALLOC_FAILURE_ACTION='
+    '-DMALLOC_FAILURE_ACTION=' \
+    -DUSE_LOCKS=1
 
 # ---------- Linker flags ----------
 LDFLAGS := -static -nostdlib \
@@ -263,9 +264,9 @@ $(TARGET): $(ALL_OBJS) $(LDSCRIPT)
 %.o: %.c
 	$(CC) $(CFLAGS) $(WASMLET_INCLUDES) $(WAMR_INCLUDES) $(WAMR_DEFS) -I. -c -o $@ $<
 
-# WAMR platform C sources (needs WAMR include paths)
+# WAMR platform C sources (needs WAMR + wasmlet include paths)
 $(PLATFORM_DIR)/%.o: $(PLATFORM_DIR)/%.c $(PLATFORM_DIR)/platform_internal.h
-	$(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(WASMLET_INCLUDES) $(WAMR_INCLUDES) $(WAMR_DEFS) -c -o $@ $<
 
 # PAL assembly sources
 arch/x86_64/%.o: arch/x86_64/%.S

@@ -224,6 +224,18 @@ void pal_svsm_get_result(void) {
      * invoke_trustlet call (or never returns if no further invocations). */
 }
 
+/* ========== Thread capacity query ========== */
+
+uint64_t pal_svsm_query_thread_capacity(void) {
+    struct monitor_call_data data;
+    data.rax = 0x4FFFFFE9;
+    data.rbx = 0;
+    data.rcx = 0;
+    data.rdx = 0;
+    monitor_call(&data);
+    return data.rax;
+}
+
 /* ========== Memory Channel management ========== */
 
 int pal_svsm_inflate_channel(int select, uint64_t size) {

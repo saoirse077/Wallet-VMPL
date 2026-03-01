@@ -99,6 +99,44 @@ PYBIND11_MODULE(_wallet, m) {
     stat_reset();
   });
   m.def("create_channel", &create_channel, py::arg("trustlet_id_1"), py::arg("trustlet_id_2"));
+
+  m.def(
+      "trustlet_load_module",
+      [](int trustlet_id, std::string wasm_data) -> py::tuple {
+        uint32_t module_id = 0;
+        int ret = trustlet_load_module(trustlet_id, wasm_data.data(),
+                                       wasm_data.size(), &module_id);
+        return py::make_tuple(ret, module_id);
+      },
+      py::arg("trustlet_id"), py::arg("wasm_data"));
+
+  m.def(
+      "trustlet_submit_task",
+      [](int trustlet_id, uint32_t module_id, std::string func_name,
+         std::vector<uint32_t> argv) -> py::tuple {
+        uint32_t request_id = 0;
+        int ret = trustlet_submit_task(
+            trustlet_id, module_id, func_name.c_str(),
+            argv.empty() ? nullptr : argv.data(), (uint16_t)argv.size(),
+            &request_id);
+        return py::make_tuple(ret, request_id);
+      },
+      py::arg("trustlet_id"), py::arg("module_id"), py::arg("func_name"),
+      py::arg("argv"));
+
+  m.def(
+      "trustlet_get_result",
+      [](int trustlet_id, uint32_t request_id) -> py::tuple {
+        uint32_t status = 0, value = 0;
+        int ret =
+            trustlet_get_result(trustlet_id, request_id, &status, &value);
+        return py::make_tuple(ret, status, value);
+      },
+      py::arg("trustlet_id"), py::arg("request_id"));
+
+  m.def("trustlet_destroy_runtime", &trustlet_destroy_runtime,
+        py::arg("trustlet_id"));
+
 #ifdef VERSION_INFO
   m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
 #else

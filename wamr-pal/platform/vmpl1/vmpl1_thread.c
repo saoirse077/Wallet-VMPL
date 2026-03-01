@@ -26,6 +26,7 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#include "wasmlet_platform.h"
 
 /* ================================================================
  * Mutex — backed by pal_spinlock_t
@@ -192,8 +193,7 @@ os_rwlock_destroy(korp_rwlock *lock)
 korp_tid
 os_self_thread(void)
 {
-    /* Return a fixed thread ID for the single thread */
-    return (korp_tid)1;
+    return (korp_tid)wasmlet_thread_self();
 }
 
 uint8 *

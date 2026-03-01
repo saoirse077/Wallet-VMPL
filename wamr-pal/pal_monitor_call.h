@@ -208,6 +208,15 @@ uint64_t pal_svsm_thread_join(uint64_t tid);
  */
 void pal_svsm_thread_exit(uint64_t exit_code);
 
+/* ========== Thread capacity query ========== */
+
+/*
+ * Query available thread runner capacity (number of APs for threads)
+ * Call number: 0x4FFFFFE9
+ * Returns: number of available thread runners (CPU_COUNT - 1)
+ */
+uint64_t pal_svsm_query_thread_capacity(void);
+
 /* ========== Memory Channel management ========== */
 
 /*

@@ -4,7 +4,7 @@ KERNEL_PATH?=${ROOT_PATH}/linux/
 KERNEL_PATCH?=${ROOT_PATH}/kernel.patch
 USER?=$(shell whoami)
 GUEST_PATH?=${ROOT_PATH}/tmp/
-CORES?=1
+CORES?=4
 MEM?=32
 
 SOURCE_IMAGE=tmp
@@ -141,7 +141,7 @@ build_and_run: build_svsm run
 ## Mounts ./module/ at /root/module 
 QEMU_PATH?=$(shell which qemu-system-x86_64)
 run:
-	sudo $(QEMU_PATH) \
+	echo "***REMOVED***" | sudo -S $(QEMU_PATH) \
 	-enable-kvm \
 	-cpu EPYC-v4,host-phys-bits=true  \
 	-machine q35,confidential-guest-support=sev0,memory-backend=ram1 \
@@ -157,7 +157,6 @@ run:
 	-serial pty \
 	-virtfs local,path=module/,mount_tag=mo,security_model=passthrough \
 	-virtfs local,path=Benchmarks/,mount_tag=benchmarks,security_model=passthrough \
-	-virtfs local,path=gramine-svsm/,mount_tag=gramine,security_model=passthrough
 
 
 ssh:

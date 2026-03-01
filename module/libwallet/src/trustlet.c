@@ -400,3 +400,133 @@ int delete_trustlet(const int trustlet_id) {
 #endif
     return ioctl(con, VMPL_WR, &call);
 }
+
+/*
+ * Build an input buffer with the given command, then invoke the trustlet
+ * and parse the 8-byte output (status + value).
+ *
+ * Returns 0 on success; the parsed status/value are written to *out_status
+ * and *out_value.  Returns -1 on transport error.
+ */
+static int invoke_with_command(int trustlet_id,
+                               uint16_t command,
+                               const void *payload, uint64_t payload_size,
+                               uint32_t func_name_len, uint16_t argc,
+                               uint32_t wasm_size,
+                               uint32_t *out_status, uint32_t *out_value)
+{
+    uint64_t total = 12 + payload_size;
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (!buf)
+        return -1;
+    memset(buf, 0, total);
+
+    /* 12-byte header: wasm_size(4) + func_name_len(4) + argc(2) + command(2) */
+    *(uint32_t *)(buf + 0) = wasm_size;
+    *(uint32_t *)(buf + 4) = func_name_len;
+    *(uint16_t *)(buf + 8) = argc;
+    *(uint16_t *)(buf + 10) = command;
+
+    if (payload && payload_size > 0)
+        memcpy(buf + 12, payload, payload_size);
+
+    char *out = invoke_trustlet_bin(trustlet_id, buf, total, 4096);
+    free(buf);
+
+    if (!out)
+        return -1;
+
+    uint32_t st = *(uint32_t *)(out + 0);
+    uint32_t val = *(uint32_t *)(out + 4);
+    free(out);
+
+    if (out_status) *out_status = st;
+    if (out_value)  *out_value  = val;
+    return 0;
+}
+
+int trustlet_load_module(int trustlet_id,
+                         const void *wasm_data, uint64_t wasm_size,
+                         uint32_t *module_id)
+{
+    uint32_t status, value;
+    int ret = invoke_with_command(trustlet_id,
+                                  TRUSTLET_CMD_LOAD_MODULE,
+                                  wasm_data, wasm_size,
+                                  0, 0, (uint32_t)wasm_size,
+                                  &status, &value);
+    if (ret != 0)
+        return -1;
+    if (status != 0)
+        return -(int)status;
+    if (module_id)
+        *module_id = value;
+    return 0;
+}
+
+int trustlet_submit_task(int trustlet_id, uint32_t module_id,
+                         const char *func_name,
+                         const uint32_t *argv, uint16_t argc,
+                         uint32_t *request_id)
+{
+    uint32_t name_len = (uint32_t)strlen(func_name);
+    uint32_t name_padded = (name_len + 3) & ~(uint32_t)3;
+    uint64_t payload_size = 4 + name_padded + (uint64_t)argc * 4;
+
+    uint8_t *payload = (uint8_t *)malloc(payload_size);
+    if (!payload)
+        return -1;
+    memset(payload, 0, payload_size);
+
+    uint32_t off = 0;
+    *(uint32_t *)(payload + off) = module_id;
+    off += 4;
+    memcpy(payload + off, func_name, name_len);
+    off += name_padded;
+    for (uint16_t i = 0; i < argc; i++) {
+        *(uint32_t *)(payload + off) = argv[i];
+        off += 4;
+    }
+
+    uint32_t status, value;
+    int ret = invoke_with_command(trustlet_id,
+                                  TRUSTLET_CMD_SUBMIT_TASK,
+                                  payload, payload_size,
+                                  name_len, argc, 0,
+                                  &status, &value);
+    free(payload);
+
+    if (ret != 0)
+        return -1;
+    if (status != 0)
+        return -(int)status;
+    if (request_id)
+        *request_id = value;
+    return 0;
+}
+
+int trustlet_get_result(int trustlet_id, uint32_t request_id,
+                        uint32_t *out_status, uint32_t *out_value)
+{
+    uint8_t payload[4];
+    *(uint32_t *)payload = request_id;
+
+    return invoke_with_command(trustlet_id,
+                               TRUSTLET_CMD_GET_RESULT,
+                               payload, 4,
+                               0, 0, 0,
+                               out_status, out_value);
+}
+
+int trustlet_destroy_runtime(int trustlet_id)
+{
+    uint32_t status, value;
+    int ret = invoke_with_command(trustlet_id,
+                                  TRUSTLET_CMD_DESTROY,
+                                  NULL, 0,
+                                  0, 0, 0,
+                                  &status, &value);
+    if (ret != 0)
+        return -1;
+    return (int)status;
+}
