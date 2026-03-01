@@ -41,3 +41,4 @@ runtime/pip/
 runtime/python*
 report_generation_measurements*
 *.so
+pip

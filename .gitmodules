@@ -5,7 +5,7 @@
 [submodule "linux"]
 	path = linux
 	url = https://github.com/Sabanic-P/linux.git
-	branch = svsm-vmpl-guest
+	branch = svms-vmpl-guest
 [submodule "svsm"]
 	path = svsm
 	url = https://github.com/saoirse077/svsm-wallet.git
@@ -16,10 +16,6 @@
 [submodule "client/snpguest"]
 	path = client/snpguest
 	url = https://github.com/virtee/snpguest.git
-[submodule "gramine-svsm"]
-	path = gramine-svsm
-	url = https://github.com/saoirse077/gramine-svsm-wallet.git
-	branch = mpk-dev
 [submodule "Benchmarks/SeBS"]
 	path = Benchmarks/SeBS
 	url = https://github.com/TUM-DSE/Wallet-SeBS.git
