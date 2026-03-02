@@ -1,27 +1,10 @@
 /*
  * vmpl1_thread.c - WAMR thread/mutex/cond/rwlock APIs for bare-metal VMPL1
  *
- * In our bare-metal environment:
- *   - No pthreads — all mutex ops use pal_spinlock
- *   - No condition variables — stubs return BHT_OK
- *   - No thread creation — stubs return BHT_ERROR
- *   - Single vCPU, single thread in Phase 2
- *
- * For future multi-vCPU support, thread creation will be handled
- * directly via PAL → SVSM interface, bypassing WAMR's os_thread_create.
- */
- /*
- * vmpl1_thread.c - 面向裸机 VMPL1 的 WAMR 线程/互斥锁/条件变量/读写锁接口实现
- *
- * 在我们的裸机环境中：
- *   - 不支持 pthread —— 所有互斥锁操作都使用 pal_spinlock 实现
- *   - 不支持条件变量 —— 相关桩函数直接返回 BHT_OK
- *   - 不支持线程创建 —— 相关桩函数直接返回 BHT_ERROR
- *   - 第二阶段（Phase 2）仅有单个 vCPU、单线程运行
- *
- * 未来若支持多 vCPU，线程创建将通过
- * PAL → SVSM 接口直接实现，
- * 而不是通过 WAMR 的 os_thread_create。
+ * Multi-vCPU aware implementation:
+ *   - Recursive mutex with owner tracking (spinlock + TID + count)
+ *   - Per-thread env via TLS (not a global flag)
+ *   - Thread creation delegated to wasmlet_platform (PAL → SVSM)
  */
 
 #include "platform_api_vmcore.h"
@@ -29,10 +12,11 @@
 #include "wasmlet_platform.h"
 
 /* ================================================================
- * Mutex — backed by pal_spinlock_t
+ * Mutex — recursive spinlock with owner tracking
  *
- * korp_mutex is typedef'd to pal_spinlock_t in platform_internal.h.
- * In single-thread Phase 2, these are never contended.
+ * korp_mutex contains { pal_spinlock_t lock; owner; count }.
+ * All mutexes are recursive-safe: if the current thread already
+ * holds the lock, the count is incremented without blocking.
  * ================================================================ */
 
 int
@@ -40,7 +24,9 @@ os_mutex_init(korp_mutex *mutex)
 {
     if (!mutex)
         return BHT_ERROR;
-    pal_spin_init(mutex);
+    pal_spin_init(&mutex->lock);
+    mutex->owner = 0;
+    mutex->count = 0;
     return BHT_OK;
 }
 
@@ -56,7 +42,17 @@ os_mutex_lock(korp_mutex *mutex)
 {
     if (!mutex)
         return BHT_ERROR;
-    pal_spin_lock(mutex);
+
+    uint64_t self = wasmlet_thread_self();
+
+    if (mutex->owner == self) {
+        mutex->count++;
+        return BHT_OK;
+    }
+
+    pal_spin_lock(&mutex->lock);
+    mutex->owner = self;
+    mutex->count = 1;
     return BHT_OK;
 }
 
@@ -65,13 +61,14 @@ os_mutex_unlock(korp_mutex *mutex)
 {
     if (!mutex)
         return BHT_ERROR;
-    pal_spin_unlock(mutex);
+
+    if (--mutex->count == 0) {
+        mutex->owner = 0;
+        pal_spin_unlock(&mutex->lock);
+    }
     return BHT_OK;
 }
 
-/* Recursive mutex — in single-thread mode, same as regular mutex.
- * For true recursive support, we'd need to track owner thread ID
- * and recursion count. Not needed in Phase 2. */
 int
 os_recursive_mutex_init(korp_mutex *mutex)
 {
@@ -256,30 +253,42 @@ os_thread_exit(void *retval)
 }
 
 /* ================================================================
- * Thread environment — used by wasm_runtime_init_thread_env()
+ * Thread environment — per-thread flag via TLS
  *
- * In single-thread mode, we just track a boolean flag.
+ * Each thread must independently call wasm_runtime_init_thread_env().
+ * A global flag would cause workers to skip their own init after the
+ * main thread already set it.
  * ================================================================ */
 
-static bool thread_env_initialized = false;
+static wasmlet_tls_key_t tls_key_thread_env = -1;
+
+static void
+ensure_thread_env_tls_key(void)
+{
+    if (tls_key_thread_env < 0)
+        wasmlet_tls_create(&tls_key_thread_env);
+}
 
 int
 os_thread_env_init(void)
 {
-    thread_env_initialized = true;
+    ensure_thread_env_tls_key();
+    wasmlet_tls_set(tls_key_thread_env, (void *)1);
     return BHT_OK;
 }
 
 void
 os_thread_env_destroy(void)
 {
-    thread_env_initialized = false;
+    wasmlet_tls_set(tls_key_thread_env, (void *)0);
 }
 
 bool
 os_thread_env_inited(void)
 {
-    return thread_env_initialized;
+    if (tls_key_thread_env < 0)
+        return false;
+    return wasmlet_tls_get(tls_key_thread_env) != (void *)0;
 }
 
 /* ================================================================

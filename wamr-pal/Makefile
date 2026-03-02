@@ -319,6 +319,11 @@ deploy: $(TARGET)
 		echo "  wat2wasm add.wat -o add.wasm"; \
 		echo "Deployed $(TARGET) to ../module/example/"; \
 	fi
+	@# Compile loop.wat → loop.wasm if wat2wasm is available
+	@if command -v wat2wasm >/dev/null 2>&1; then \
+		wat2wasm loop.wat -o loop.wasm 2>/dev/null || true; \
+	fi
+	@if [ -f loop.wasm ]; then cp loop.wasm ../module/example/; fi
 	@# Ensure dummy files exist for create_zygote/create_trustlet
 	@touch ../module/example/dummy.manifest ../module/example/dummy.libos
 	@echo "dummy" > ../module/example/dummy_function.txt 2>/dev/null || true

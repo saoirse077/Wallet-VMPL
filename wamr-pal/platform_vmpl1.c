@@ -118,7 +118,7 @@ struct thread_start_info {
     void  *user_arg;
 };
 
-static uint64_t next_stack_addr = THREAD_STACK_REGION_START;
+static volatile uint64_t next_stack_addr = THREAD_STACK_REGION_START;
 
 /*
  * Thread entry point. SVSM sets RDI = arg (pointer to thread_start_info),
@@ -144,8 +144,8 @@ int wasmlet_thread_create(wasmlet_thread_t *t,
     /* Reserve extra page for TCB + start_info at the bottom */
     uint64_t total = aligned + 0x1000;
 
-    void *base = (void *)next_stack_addr;
-    next_stack_addr += total;
+    uint64_t base_val = __atomic_fetch_add(&next_stack_addr, total, __ATOMIC_SEQ_CST);
+    void *base = (void *)base_val;
 
     int ret = pal_svsm_virt_alloc(base, total, 0x3 /* RW */);
     if (ret != 0)
@@ -162,7 +162,13 @@ int wasmlet_thread_create(wasmlet_thread_t *t,
     info->start_fn = start;
     info->user_arg = arg;
 
-    uint64_t stack_top = (uint64_t)base + total;
+    /*
+     * x86-64 ABI: at function entry RSP % 16 == 8 (as if CALL pushed
+     * a return address).  Subtract 8 so the hardware-set RSP satisfies
+     * this requirement; without it GCC -O2 may emit movaps on the
+     * misaligned stack, causing #GP → triple-fault on bare-metal.
+     */
+    uint64_t stack_top = (uint64_t)base + total - 8;
 
     uint64_t tid = pal_svsm_thread_create(
         (uint64_t)thread_entry,
@@ -189,8 +195,17 @@ int wasmlet_thread_join(wasmlet_thread_t t, void **retval) {
 uint64_t wasmlet_thread_self(void) {
     if (!gs_initialized)
         return 0;
-    struct thread_tcb *tcb = get_tcb();
-    return tcb->thread_id;
+    /*
+     * Return the TCB pointer as the thread identity.
+     * Using tcb->thread_id is WRONG because:
+     *   - Main thread's thread_id is 0 (never set), colliding with
+     *     the "no owner" sentinel (0) in korp_mutex.owner.
+     *   - Worker thread_id is set AFTER pal_svsm_thread_create returns,
+     *     so a worker may race and read 0 before the main thread writes it.
+     * The TCB address is unique per thread (each has its own GS.base) and
+     * always non-zero, eliminating both issues.
+     */
+    return (uint64_t)get_tcb();
 }
 
 void wasmlet_thread_exit(void *retval) {
@@ -212,24 +227,22 @@ void *wasmlet_mem_map(size_t size, int pkey) {
      * For pkey > 0: use SVSM mpk_alloc which allocates memory tagged with pkey.
      * For pkey == 0: use pal_svsm_virt_alloc (general allocation).
      *
-     * We need a fixed virtual address for each allocation. Use a simple
-     * bump allocator from a reserved region.
+     * Atomic bump allocator — safe for concurrent calls from multiple
+     * worker threads (each on a separate vCPU).
      */
-    static uint64_t next_addr = 0x60000000000ULL;  /* 6TB, above mmap region */
+    static volatile uint64_t next_addr = 0x60000000000ULL;  /* 6TB */
 
-    void *addr = (void *)next_addr;
-    next_addr += size;
+    uint64_t addr_val = __atomic_fetch_add(&next_addr, size, __ATOMIC_SEQ_CST);
+    void *addr = (void *)addr_val;
 
     int ret;
     if (pkey > 0) {
-        /* pal_svsm_mpk_alloc internally does virt_alloc + pkey tagging */
         ret = pal_svsm_mpk_alloc(addr, (uint64_t)size, (uint32_t)pkey);
     } else {
         ret = pal_svsm_virt_alloc(addr, (uint64_t)size, 0x3 /* RW */);
     }
 
     if (ret != 0) {
-        next_addr -= size;
         return (void *)0;
     }
 

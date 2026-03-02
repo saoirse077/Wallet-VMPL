@@ -108,7 +108,11 @@
  *   korp_rwlock — read-write lock (spinlock-based)
  *   korp_sem    — semaphore (stub)
  * ================================================================ */
-typedef pal_spinlock_t korp_mutex;
+typedef struct {
+    pal_spinlock_t lock;
+    volatile uint64_t owner;   /* thread ID of holder, 0 = unheld */
+    volatile int count;        /* recursion depth */
+} korp_mutex;
 typedef unsigned int   korp_cond;
 typedef unsigned long  korp_tid;
 typedef unsigned long  korp_thread;

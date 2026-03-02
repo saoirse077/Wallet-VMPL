@@ -58,11 +58,27 @@ static void print_pkru(const char *label) {
 
 static uint32_t g_module_id = 0;
 static int g_module_loaded = 0;
+static int g_workers_started = 0;
+static uint64_t g_thread_capacity = 0;
 
 static void handle_sync_invoke(struct input_header *hdr, volatile uint8_t *input);
 static void handle_load_module(struct input_header *hdr, volatile uint8_t *input);
 static void handle_submit_task(struct input_header *hdr, volatile uint8_t *input);
 static void handle_get_result(struct input_header *hdr, volatile uint8_t *input);
+
+static void ensure_workers_started(void)
+{
+    if (g_workers_started || g_thread_capacity == 0)
+        return;
+    pal_svsm_debug_print("[WAMR-PAL] Lazy-starting workers: ");
+    pal_svsm_debug_print_dec((int)g_thread_capacity);
+    pal_svsm_debug_print("\n");
+    int ret = wasmlet_start_workers((uint32_t)g_thread_capacity);
+    if (ret != 0) {
+        pal_svsm_debug_print("[WAMR-PAL] WARN: failed to start workers\n");
+    }
+    g_workers_started = 1;
+}
 
 void wamr_pal_main(void)
 {
@@ -83,14 +99,14 @@ void wamr_pal_main(void)
         while (1) {}
     }
 
-    uint64_t thread_capacity = pal_svsm_query_thread_capacity();
+    g_thread_capacity = pal_svsm_query_thread_capacity();
     pal_svsm_debug_print("[WAMR-PAL] Thread capacity: ");
-    pal_svsm_debug_print_dec((int)thread_capacity);
+    pal_svsm_debug_print_dec((int)g_thread_capacity);
     pal_svsm_debug_print("\n");
 
     wasmlet_config_t config;
     memset(&config, 0, sizeof(config));
-    config.max_threads = (uint32_t)(thread_capacity > 0 ? thread_capacity : 0);
+    config.max_threads = 0; /* Phase A: no workers (CoW safety) */
     config.thread_stack_size = 32 * 1024;
     config.max_heap_size = 32 * 1024;
     config.lf_queue_size = 64;
@@ -112,9 +128,9 @@ void wamr_pal_main(void)
     pal_svsm_debug_print("[WAMR-PAL] Initialization complete, suspending...\n");
     pal_svsm_exit(0);
 
-    /* Phase B: Command dispatch loop */
+    /* Phase B: Enter command loop. Workers start lazily on first async op. */
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-    pal_svsm_debug_print("[WAMR-PAL] Entered command dispatch loop\n");
+    pal_svsm_debug_print("[WAMR-PAL] Phase B: command dispatch ready\n");
     pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
     int should_exit = 0;
@@ -142,7 +158,17 @@ void wamr_pal_main(void)
             break;
         case 0xFF:
             pal_svsm_debug_print("[WAMR-PAL] DESTROY: stopping runtime...\n");
-            wasmlet_runtime_destroy();
+            if (g_module_loaded) {
+                wasmlet_unload(g_module_id);
+                g_module_loaded = 0;
+            }
+            if (g_workers_started) {
+                pal_svsm_debug_print("[WAMR-PAL] DESTROY: joining workers...\n");
+                wasmlet_runtime_destroy();
+                g_workers_started = 0;
+            } else {
+                wasmlet_runtime_destroy();
+            }
             write_output_channel(0, 0);
             should_exit = 1;
             break;
@@ -167,15 +193,18 @@ static void handle_sync_invoke(struct input_header *hdr, volatile uint8_t *input
 {
     int ret;
 
-    /* Mode 3: Shutdown (legacy) */
+    /* Mode 3: Lightweight shutdown (legacy) — unload module, write output,
+     * exit process. Does NOT call wasmlet_runtime_destroy() to avoid
+     * potential deadlock from thread_join on workers that never ran. */
     if (hdr->wasm_size == 0 && hdr->func_name_len == 0) {
-        pal_svsm_debug_print("[WAMR-PAL] Legacy shutdown\n");
+        pal_svsm_debug_print("[WAMR-PAL] Legacy shutdown (lightweight)\n");
         if (g_module_loaded) {
             wasmlet_unload(g_module_id);
             g_module_loaded = 0;
         }
-        wasmlet_runtime_destroy();
         write_output_channel(0, 0);
+        pal_svsm_get_result();
+        pal_svsm_exit(0);
         return;
     }
 
@@ -278,6 +307,7 @@ static void handle_load_module(struct input_header *hdr, volatile uint8_t *input
 
 static void handle_submit_task(struct input_header *hdr, volatile uint8_t *input)
 {
+    ensure_workers_started();
     uint32_t offset = INPUT_HEADER_SIZE;
     uint32_t module_id = *(volatile uint32_t *)(input + offset);
     offset += 4;
