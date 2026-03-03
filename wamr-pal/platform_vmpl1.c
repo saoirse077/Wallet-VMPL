@@ -1,13 +1,13 @@
 /**
  * @file platform_vmpl1.c
- * @brief VMPL1 (bare-metal) implementation of wasmlet platform abstraction layer
+ * @brief VMPL1（裸机）环境下 wasmlet 平台抽象层的实现
  *
- * TLS: per-thread TCB accessed via GS.base
- * Mutex: pal_spinlock_t
- * Thread: SVSM thread_create/join/exit monitor calls
- * MPK: SVSM monitor calls
- * Time: RDTSC
- * Logging: pal_svsm_debug_print
+ * TLS:    通过 GS.base 访问每线程 TCB
+ * Mutex:  基于 pal_spinlock_t 的自旋锁
+ * Thread: 通过 SVSM monitor call 实现 thread_create/join/exit
+ * MPK:    通过 SVSM monitor call 实现六接口
+ * Time:   基于 RDTSC 指令
+ * Log:    通过 pal_svsm_debug_print 输出到串口
  */
 
 #include "wasmlet_platform.h"
@@ -15,7 +15,7 @@
 #include "pal_spinlock.h"
 #include "pal_string.h"
 
-/* ============ TCB (Thread Control Block, pointed to by GS.base) ============ */
+/* ============ TCB（线程控制块，通过 GS.base 指向）============ */
 
 struct thread_tcb {
     struct thread_tcb *self;
@@ -52,7 +52,7 @@ static void ensure_main_tcb(void) {
     gs_initialized = 1;
 }
 
-/* ============ TLS (per-thread via GS.base TCB) ============ */
+/* ============ TLS（每线程，通过 GS.base TCB 实现）============ */
 
 int wasmlet_tls_create(wasmlet_tls_key_t *key) {
     ensure_main_tcb();
@@ -81,7 +81,7 @@ int wasmlet_tls_set(wasmlet_tls_key_t key, void *value) {
     return 0;
 }
 
-/* ============ Mutex (spinlock wrapper) ============ */
+/* ============ 互斥锁（自旋锁封装）============ */
 
 static inline pal_spinlock_t *spin_ptr(wasmlet_mutex_t *m) {
     return (pal_spinlock_t *)m->_opaque;
@@ -108,10 +108,10 @@ void wasmlet_mutex_destroy(wasmlet_mutex_t *m) {
     (void)m;
 }
 
-/* ============ Thread (SVSM thread_create/join/exit) ============ */
+/* ============ 线程管理（SVSM thread_create/join/exit）============ */
 
 #define THREAD_STACK_DEFAULT_SIZE  (64 * 1024)
-#define THREAD_STACK_REGION_START  0x70000000000ULL   /* 7TB, dedicated for thread stacks */
+#define THREAD_STACK_REGION_START  0x70000000000ULL   /* 7TB 起始，专用于线程栈 */
 
 struct thread_start_info {
     void *(*start_fn)(void *);
@@ -121,8 +121,8 @@ struct thread_start_info {
 static volatile uint64_t next_stack_addr = THREAD_STACK_REGION_START;
 
 /*
- * Thread entry point. SVSM sets RDI = arg (pointer to thread_start_info),
- * RSP = stack_top, GS.base = TCB address.
+ * 线程入口点。SVSM 设置 RDI=arg（指向 thread_start_info），
+ * RSP=stack_top, GS.base=TCB 地址。
  */
 static void __attribute__((noinline, used))
 thread_entry(struct thread_start_info *info) {
@@ -141,7 +141,7 @@ int wasmlet_thread_create(wasmlet_thread_t *t,
     if (stack_size == 0)
         stack_size = THREAD_STACK_DEFAULT_SIZE;
     uint64_t aligned = (stack_size + 0xFFF) & ~0xFFFULL;
-    /* Reserve extra page for TCB + start_info at the bottom */
+    /* 底部额外预留一页用于 TCB + start_info */
     uint64_t total = aligned + 0x1000;
 
     uint64_t base_val = __atomic_fetch_add(&next_stack_addr, total, __ATOMIC_SEQ_CST);
@@ -152,21 +152,20 @@ int wasmlet_thread_create(wasmlet_thread_t *t,
         return -1;
     memset(base, 0, total);
 
-    /* TCB at the very beginning of the region */
+    /* TCB 位于区域最低地址 */
     struct thread_tcb *tcb = (struct thread_tcb *)base;
     tcb->self = tcb;
 
-    /* start_info right after TCB */
+    /* start_info 紧随 TCB 之后 */
     struct thread_start_info *info =
         (struct thread_start_info *)((uint8_t *)tcb + sizeof(*tcb));
     info->start_fn = start;
     info->user_arg = arg;
 
     /*
-     * x86-64 ABI: at function entry RSP % 16 == 8 (as if CALL pushed
-     * a return address).  Subtract 8 so the hardware-set RSP satisfies
-     * this requirement; without it GCC -O2 may emit movaps on the
-     * misaligned stack, causing #GP → triple-fault on bare-metal.
+     * x86-64 ABI 要求函数入口处 RSP % 16 == 8（如同 CALL 压入返回地址后）。
+     * 减去 8 使硬件设置的 RSP 满足此要求；否则 GCC -O2 可能生成 movaps
+     * 操作导致栈未对齐，在裸机上触发 #GP → triple-fault。
      */
     uint64_t stack_top = (uint64_t)base + total - 8;
 
@@ -196,14 +195,14 @@ uint64_t wasmlet_thread_self(void) {
     if (!gs_initialized)
         return 0;
     /*
-     * Return the TCB pointer as the thread identity.
-     * Using tcb->thread_id is WRONG because:
-     *   - Main thread's thread_id is 0 (never set), colliding with
-     *     the "no owner" sentinel (0) in korp_mutex.owner.
-     *   - Worker thread_id is set AFTER pal_svsm_thread_create returns,
-     *     so a worker may race and read 0 before the main thread writes it.
-     * The TCB address is unique per thread (each has its own GS.base) and
-     * always non-zero, eliminating both issues.
+     * 使用 TCB 指针作为线程标识。
+     * 不能使用 tcb->thread_id，因为：
+     *   - 主线程的 thread_id 为 0（从未设置），与 korp_mutex.owner
+     *     的"无持有者"哨兵值 (0) 冲突。
+     *   - Worker 的 thread_id 在 pal_svsm_thread_create 返回后才设置，
+     *     worker 可能竞态读到 0。
+     * TCB 地址对每线程唯一（各自独立的 GS.base），且始终非零，
+     * 消除了以上两个问题。
      */
     return (uint64_t)get_tcb();
 }
@@ -213,22 +212,21 @@ void wasmlet_thread_exit(void *retval) {
     __builtin_unreachable();
 }
 
-/* ============ MPK Primitives (SVSM monitor calls) ============ */
+/* ============ MPK 原语（SVSM monitor call 实现）============ */
 
 int wasmlet_pkey_alloc(void) {
     return pal_svsm_mpk_pkey_alloc();
 }
 
 void *wasmlet_mem_map(size_t size, int pkey) {
-    /* Page-align size */
+    /* 页对齐 */
     size = (size + 0xFFF) & ~0xFFFULL;
 
     /*
-     * For pkey > 0: use SVSM mpk_alloc which allocates memory tagged with pkey.
-     * For pkey == 0: use pal_svsm_virt_alloc (general allocation).
+     * pkey > 0: 使用 SVSM mpk_alloc 分配带 pkey 标记的内存。
+     * pkey == 0: 使用 pal_svsm_virt_alloc（通用内存分配）。
      *
-     * Atomic bump allocator — safe for concurrent calls from multiple
-     * worker threads (each on a separate vCPU).
+     * 原子 bump 分配器 —— 对多 worker 线程（各在不同 vCPU）的并发调用安全。
      */
     static volatile uint64_t next_addr = 0x60000000000ULL;  /* 6TB */
 
@@ -247,9 +245,9 @@ void *wasmlet_mem_map(size_t size, int pkey) {
     }
 
     /*
-     * Only zero-fill pkey==0 memory (accessible without PKRU change).
-     * pkey>0 pages are zero-filled by SVSM on allocation; the caller
-     * must enter the domain (update PKRU) before accessing them.
+     * 仅对 pkey==0 的内存执行零填充（无需切换 PKRU 即可访问）。
+     * pkey>0 的页面由 SVSM 在分配时已清零；调用者必须先进入域
+     *（更新 PKRU）才能访问。
      */
     if (pkey == 0) {
         memset(addr, 0, size);
@@ -267,12 +265,12 @@ void wasmlet_pkru_reset(int pkey) {
 
 void wasmlet_mem_unmap(void *addr, size_t size) {
     /*
-     * pkey=0 regions are allocated via pal_svsm_virt_alloc and NOT tracked
-     * by SVSM's MpkMemoryManager.  There is no pal_svsm_virt_free, so we
-     * skip the free; SVSM reclaims all Trustlet resources at exit.
+     * pkey=0 区域通过 pal_svsm_virt_alloc 分配，不在 SVSM 的 MpkMemoryManager
+     * 中跟踪。没有 pal_svsm_virt_free，故此处跳过释放；SVSM 在 Trustlet
+     * 退出时自动回收所有资源。
      *
-     * pkey>0 regions are freed via wasmlet_pkey_free (mpk_free_pkey),
-     * not through this function, so nothing to do here.
+     * pkey>0 区域通过 wasmlet_pkey_free（mpk_free_pkey）释放，
+     * 不经过本函数，故此处无需操作。
      */
     (void)addr;
     (void)size;
@@ -289,11 +287,9 @@ void wasmlet_mem_reset(void *addr, size_t size) {
 
 int wasmlet_mem_set_pkey(void *addr, size_t size, int pkey) {
     /*
-     * SVSM does not support re-tagging existing pages with a different pkey
-     * (free + realloc at the same VA panics the page allocator).
-     * For the exec heap, keep it at pkey=0 which is always accessible
-     * regardless of PKRU state.  True per-domain exec isolation can be
-     * revisited once SVSM adds pkey_mprotect support.
+     * SVSM 不支持对已有页面重新标记 pkey（同一 VA 上 free+realloc 会导致
+     * 页分配器 panic）。exec heap 保持 pkey=0，无论 PKRU 状态如何都可访问。
+     * 待 SVSM 支持 pkey_mprotect 后，可重新实现按域隔离 exec heap。
      */
     (void)addr;
     (void)size;
@@ -301,7 +297,7 @@ int wasmlet_mem_set_pkey(void *addr, size_t size, int pkey) {
     return 0;
 }
 
-/* ============ Time (RDTSC based) ============ */
+/* ============ 时间（基于 RDTSC）============ */
 
 static inline uint64_t rdtsc(void) {
     uint32_t lo, hi;
@@ -309,7 +305,7 @@ static inline uint64_t rdtsc(void) {
     return ((uint64_t)hi << 32) | lo;
 }
 
-/* ~2 GHz TSC assumed; >> 11 ≈ / 2048 ≈ / 2000 for microseconds */
+/* 假设 TSC ~2 GHz; >> 11 ≈ / 2048 ≈ / 2000，近似微秒 */
 #define TSC_TO_US_SHIFT 11
 
 uint64_t wasmlet_time_us(void) {
@@ -327,7 +323,7 @@ void wasmlet_usleep(uint32_t usec) {
     }
 }
 
-/* ============ Logging ============ */
+/* ============ 日志输出 ============ */
 
 void wasmlet_log_output(const char *msg) {
     if (msg)

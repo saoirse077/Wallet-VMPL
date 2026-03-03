@@ -1,12 +1,14 @@
 /*
- * wamr_pal_main.c - VMPL1 entry point using wasmlet library
+ * wamr_pal_main.c - VMPL1 入口点，使用 wasmlet 库
  *
- * Phase 3b execution model with wasmlet.h API:
+ * Phase 3b 执行模型（wasmlet.h API）：
  *   Phase A (early_invoke): heap_init + wasmlet_runtime_init + suspend
- *   Phase B (invoke_trustlet loop):
- *     Mode 1: wasmlet_init + wasmlet_run (load + invoke)
- *     Mode 2: wasmlet_run (invoke-only, reuse module)
- *     Mode 3: shutdown
+ *   Phase B (invoke_trustlet 循环):
+ *     命令 0: wasmlet_init + wasmlet_run（加载 + 同步执行）
+ *     命令 1: wasmlet_init（仅加载模块）
+ *     命令 2: wasmlet_run_async（提交异步任务）
+ *     命令 3: wasmlet_get_result（查询异步结果）
+ *     命令 0xFF: shutdown（销毁运行时）
  */
 
 #include "pal_monitor_call.h"
@@ -88,7 +90,7 @@ void wamr_pal_main(void)
     pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Starting (wasmlet)\n");
     PRINT_PKRU("startup");
 
-    /* Phase A: Initialization */
+    /* Phase A: 运行时初始化 */
     ret = pal_heap_init();
     if (ret != 0) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: Heap init failed\n");
@@ -99,7 +101,7 @@ void wamr_pal_main(void)
 
     wasmlet_config_t config;
     memset(&config, 0, sizeof(config));
-    config.max_threads = 0; /* Phase A: no workers (CoW safety) */
+    config.max_threads = 0; /* Phase A: 不创建 worker（CoW 安全）*/
     config.thread_stack_size = 32 * 1024;
     config.max_heap_size = 32 * 1024;
     config.lf_queue_size = 64;
@@ -118,7 +120,7 @@ void wamr_pal_main(void)
     PRINT_PKRU("after runtime_init");
     pal_svsm_exit(0);
 
-    /* Phase B: Enter command loop. Workers start lazily on first async op. */
+    /* Phase B: 进入命令循环。Worker 在首次异步操作时惰性启动。 */
     pal_svsm_debug_print("[WAMR-PAL] Phase B: command dispatch ready\n");
 
     int should_exit = 0;
@@ -174,15 +176,15 @@ void wamr_pal_main(void)
     }
 }
 
-/* ========== Command handlers ========== */
+/* ========== 命令处理函数 ========== */
 
 static void handle_sync_invoke(struct input_header *hdr, volatile uint8_t *input)
 {
     int ret;
 
-    /* Mode 3: Lightweight shutdown (legacy) — unload module, write output,
-     * exit process. Does NOT call wasmlet_runtime_destroy() to avoid
-     * potential deadlock from thread_join on workers that never ran. */
+    /* 轻量关机（兼容旧版）—— 卸载模块、写回输出、退出进程。
+     * 不调用 wasmlet_runtime_destroy()，避免对从未运行的 worker
+     * 执行 thread_join 导致死锁。 */
     if (hdr->wasm_size == 0 && hdr->func_name_len == 0) {
         pal_svsm_debug_print("[WAMR-PAL] Legacy shutdown (lightweight)\n");
         if (g_module_loaded) {

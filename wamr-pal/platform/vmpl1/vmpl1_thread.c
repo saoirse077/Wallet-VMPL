@@ -1,10 +1,10 @@
 /*
- * vmpl1_thread.c - WAMR thread/mutex/cond/rwlock APIs for bare-metal VMPL1
+ * vmpl1_thread.c - VMPL1 裸机环境下 WAMR 线程/互斥/条件变量/读写锁 API 实现
  *
- * Multi-vCPU aware implementation:
- *   - Recursive mutex with owner tracking (spinlock + TID + count)
- *   - Per-thread env via TLS (not a global flag)
- *   - Thread creation delegated to wasmlet_platform (PAL → SVSM)
+ * 多 vCPU 感知实现：
+ *   - 带所有者跟踪的递归互斥锁（自旋锁 + TID + 计数器）
+ *   - 基于 TLS 的每线程环境标记（非全局标志）
+ *   - 线程创建委托给 wasmlet_platform（PAL → SVSM）
  */
 
 #include "platform_api_vmcore.h"
@@ -12,11 +12,10 @@
 #include "wasmlet_platform.h"
 
 /* ================================================================
- * Mutex — recursive spinlock with owner tracking
+ * 互斥锁 —— 带所有者跟踪的递归自旋锁
  *
- * korp_mutex contains { pal_spinlock_t lock; owner; count }.
- * All mutexes are recursive-safe: if the current thread already
- * holds the lock, the count is incremented without blocking.
+ * korp_mutex 包含 { pal_spinlock_t lock; owner; count }。
+ * 所有互斥锁均支持递归：若当前线程已持有锁，仅递增计数器而不阻塞。
  * ================================================================ */
 
 int
@@ -76,11 +75,10 @@ os_recursive_mutex_init(korp_mutex *mutex)
 }
 
 /* ================================================================
- * Condition variables — stubs (not used in single-thread mode)
+ * 条件变量 —— 桩实现（WAMR 核心解释器不使用）
  *
- * WAMR's core interpreter doesn't actually wait on condvars.
- * These are only needed for thread-mgr and WASI threads, both
- * of which we have disabled.
+ * WAMR 核心解释器不会等待条件变量。仅 thread-mgr 和 WASI threads
+ * 需要，而这两者在本项目中均已禁用。
  * ================================================================ */
 
 int
@@ -102,7 +100,7 @@ os_cond_wait(korp_cond *cond, korp_mutex *mutex)
 {
     (void)cond;
     (void)mutex;
-    /* Should never be called in single-thread mode */
+    /* 在当前使用场景下不应被调用 */
     return BHT_OK;
 }
 
@@ -130,10 +128,10 @@ os_cond_broadcast(korp_cond *cond)
 }
 
 /* ================================================================
- * Read-write lock — backed by pal_spinlock_t
+ * 读写锁 —— 基于 pal_spinlock_t
  *
- * korp_rwlock is typedef'd to pal_spinlock_t.
- * In single-thread mode, read and write locks are identical.
+ * korp_rwlock 即 pal_spinlock_t 的 typedef。
+ * 在当前场景下，读锁和写锁行为一致（均为独占）。
  * ================================================================ */
 
 int
@@ -180,11 +178,10 @@ os_rwlock_destroy(korp_rwlock *lock)
 }
 
 /* ================================================================
- * Thread management — stubs
+ * 线程管理 —— 桩实现
  *
- * In Phase 2, we have a single vCPU running a single thread.
- * Thread creation is not supported through WAMR's platform API.
- * Future multi-vCPU support will use PAL → SVSM direct interface.
+ * WAMR 平台 API 的线程创建接口仅做桩实现（返回错误）。
+ * 真正的多线程通过 wasmlet 线程池 + PAL → SVSM 直接接口实现。
  * ================================================================ */
 
 korp_tid
@@ -196,19 +193,18 @@ os_self_thread(void)
 uint8 *
 os_thread_get_stack_boundary(void)
 {
-    /* Return NULL — we disable hardware stack boundary check
-     * via WASM_DISABLE_STACK_HW_BOUND_CHECK=1 */
+    /* 返回 NULL —— 通过 WASM_DISABLE_STACK_HW_BOUND_CHECK=1 禁用硬件栈边界检查 */
     return NULL;
 }
 
 void
 os_thread_jit_write_protect_np(bool enabled)
 {
-    /* No JIT in interpreter mode */
+    /* 解释器模式下无 JIT */
     (void)enabled;
 }
 
-/* Thread creation — not supported */
+/* 线程创建 —— 不支持（通过 wasmlet 线程池实现） */
 int
 os_thread_create_with_prio(korp_tid *tid, thread_start_routine_t start,
                            void *arg, unsigned int stack_size, int prio)
@@ -249,15 +245,14 @@ void
 os_thread_exit(void *retval)
 {
     (void)retval;
-    /* In bare-metal, just halt */
+    /* 裸机环境下直接返回 */
 }
 
 /* ================================================================
- * Thread environment — per-thread flag via TLS
+ * 线程环境 —— 基于 TLS 的每线程初始化标记
  *
- * Each thread must independently call wasm_runtime_init_thread_env().
- * A global flag would cause workers to skip their own init after the
- * main thread already set it.
+ * 每个线程必须独立调用 wasm_runtime_init_thread_env()。
+ * 若使用全局标志，worker 会在主线程设置后跳过自身初始化。
  * ================================================================ */
 
 static wasmlet_tls_key_t tls_key_thread_env = -1;
@@ -292,20 +287,19 @@ os_thread_env_inited(void)
 }
 
 /* ================================================================
- * Sleep — stub (bare-metal has no sleep mechanism)
+ * 睡眠 —— 桩实现（裸机环境无睡眠机制）
  * ================================================================ */
 
 int
 os_usleep(uint32 usec)
 {
     (void)usec;
-    /* Busy-wait approximation: do nothing.
-     * In practice, this should never be called in our use case. */
+    /* 忙等近似：无操作。在本项目的使用场景中不应被调用。 */
     return BHT_OK;
 }
 
 /* ================================================================
- * Semaphore — stubs (not used by our thread pool)
+ * 信号量 —— 桩实现（线程池不使用）
  * ================================================================ */
 
 korp_sem *
@@ -362,10 +356,10 @@ os_sem_unlink(const char *name)
 }
 
 /* ================================================================
- * Blocking operation support — stubs
+ * 阻塞操作支持 —— 桩实现
  *
- * WASM_DISABLE_WAKEUP_BLOCKING_OP=1, so these are only needed
- * as link symbols.
+ * 已设置 WASM_DISABLE_WAKEUP_BLOCKING_OP=1，
+ * 此处仅作为链接符号存在。
  * ================================================================ */
 
 int

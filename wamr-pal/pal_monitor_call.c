@@ -1,18 +1,18 @@
 /*
- * pal_monitor_call.c - VMPL1 ↔ VMPL0 CPUID trap implementation
+ * pal_monitor_call.c - VMPL1 ↔ VMPL0 CPUID 陷入实现
  *
- * Standalone version for WAMR PAL (no Gramine dependencies).
- * Based on gramine-svsm/pal/src/host/svsm/pal_monitor_call.c
+ * WAMR PAL 独立版本（无 Gramine 依赖）。
+ * 基于 gramine-svsm/pal/src/host/svsm/pal_monitor_call.c 改写。
  *
- * All functions use the CPUID instruction to trap into VMPL0 Monitor.
- * The Monitor reads the VMSA registers set by the inline assembly.
+ * 所有函数通过 CPUID 指令陷入 VMPL0 Monitor。
+ * Monitor 读取内联汇编设置的 VMSA 寄存器。
  */
 
 #include "pal_monitor_call.h"
 
 #define vc_injection "cpuid"
 
-/* ========== Low-level CPUID trap ========== */
+/* ========== 底层 CPUID 陷入 ========== */
 
 void monitor_call(struct monitor_call_data* data) {
     __asm__ volatile(
@@ -34,7 +34,7 @@ void extended_monitor_call(struct monitor_call_data* data) {
         );
 }
 
-/* ========== Error reporting and exit ========== */
+/* ========== 错误报告与退出 ========== */
 
 void pal_svsm_fail(const char* err, int err_no) {
     struct monitor_call_data data;
@@ -54,7 +54,7 @@ void pal_svsm_exit(int exitcode) {
     monitor_call(&data);
 }
 
-/* ========== Debug output ========== */
+/* ========== 调试输出 ========== */
 
 void pal_svsm_debug_putc(char c) {
     struct monitor_call_data data;
@@ -71,7 +71,7 @@ void pal_svsm_debug_print(const char* str) {
         pal_svsm_debug_putc(*str);
         str++;
     }
-    /* Send '\0' to trigger Monitor to flush the log line */
+    /* 发送 '\0' 触发 Monitor 刷新日志行 */
     pal_svsm_debug_putc('\0');
 }
 
@@ -114,7 +114,7 @@ void pal_svsm_debug_print_dec(int val) {
     pal_svsm_debug_print(&buf[i + 1]);
 }
 
-/* ========== Memory management ========== */
+/* ========== 内存管理 ========== */
 
 int pal_svsm_virt_alloc(void* addr, uint64_t size, uint64_t flags) {
     struct monitor_call_data data;
@@ -136,7 +136,7 @@ int pal_svsm_free(void* addr, uint64_t size) {
     return (int)data.rcx;
 }
 
-/* ========== MPK six interfaces ========== */
+/* ========== MPK 六接口 ========== */
 
 int pal_svsm_mpk_pkey_alloc(void) {
     struct monitor_call_data data;
@@ -146,9 +146,9 @@ int pal_svsm_mpk_pkey_alloc(void) {
     data.rdx = 0;
     monitor_call(&data);
     if (data.rcx != 0) {
-        return -(int)data.rcx;  /* failure: return negative error code */
+        return -(int)data.rcx;  /* 失败: 返回负数错误码 */
     }
-    return (int)data.rax;       /* success: return pkey (1-15) */
+    return (int)data.rax;       /* 成功: 返回 pkey (1-15) */
 }
 
 int pal_svsm_mpk_alloc(void* addr, uint64_t size, uint32_t pkey) {
@@ -211,7 +211,7 @@ uint32_t pal_svsm_mpk_query_pkru(void) {
     return (uint32_t)data.rax;
 }
 
-/* ========== Trustlet result notification ========== */
+/* ========== Trustlet 结果通知 ========== */
 
 void pal_svsm_get_result(void) {
     struct monitor_call_data data;
@@ -220,11 +220,11 @@ void pal_svsm_get_result(void) {
     data.rcx = 0;
     data.rdx = 0;
     monitor_call(&data);
-    /* After this returns, VMPL1 has been re-awakened by the next
-     * invoke_trustlet call (or never returns if no further invocations). */
+    /* 返回后，VMPL1 已被下一次 invoke_trustlet 唤醒
+     *（若无后续调用则永不返回）。 */
 }
 
-/* ========== Thread capacity query ========== */
+/* ========== 线程容量查询 ========== */
 
 uint64_t pal_svsm_query_thread_capacity(void) {
     struct monitor_call_data data;
@@ -236,7 +236,7 @@ uint64_t pal_svsm_query_thread_capacity(void) {
     return data.rax;
 }
 
-/* ========== Memory Channel management ========== */
+/* ========== 内存通道管理 ========== */
 
 int pal_svsm_inflate_channel(int select, uint64_t size) {
     struct monitor_call_data data;
@@ -248,7 +248,7 @@ int pal_svsm_inflate_channel(int select, uint64_t size) {
     return 0;
 }
 
-/* ========== Thread management ========== */
+/* ========== 线程管理 ========== */
 
 uint64_t pal_svsm_thread_create(uint64_t entry_rip, uint64_t stack_top,
                                  uint64_t gs_base, uint64_t arg) {

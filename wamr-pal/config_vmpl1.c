@@ -1,8 +1,8 @@
 /*
- * config_vmpl1.c - Minimal config stubs for wasmlet on VMPL1
+ * config_vmpl1.c - VMPL1 环境下 wasmlet 配置的最小桩实现
  *
- * On VMPL1, config is always provided by wamr_pal_main.c (stack-allocated).
- * We only need config_free() (called by wasmlet_runtime_destroy).
+ * 在 VMPL1 上，配置始终由 wamr_pal_main.c 在栈上提供。
+ * 此处仅提供 config_free()（被 wasmlet_runtime_destroy 调用）等接口。
  */
 
 #include "config.h"

@@ -28,7 +28,7 @@ REQUIREMENTS=requirements.txt
 
 #Build OVMF Firmware
 build_firmware:
-	cd edk2/; PYTHON3_ENABLE=TRUE  PYTHON_COMMAND=python3 make -j16 -C BaseTools/
+	cd edk2/; PYTHON3_ENABLE=TRUE  PYTHON_COMMAND=python3 make -j64 -C BaseTools/
 	cd edk2/; PYTHON3_ENABLE=TRUE  PYTHON_COMMAND=python3 source ./edksetup.sh; \
 	PYTHON3_ENABLE=TRUE PYTHON_COMMAND=python3 build -a X64 -b RELEASE -t GCC5 -D DEBUG_ON_SERIAL_PORT -DTPM2_ENABLE -p OvmfPkg/OvmfPkgX64.dsc
 	mkdir -p firmware
@@ -141,7 +141,7 @@ build_and_run: build_svsm run
 ## Mounts ./module/ at /root/module 
 QEMU_PATH?=$(shell which qemu-system-x86_64)
 run:
-	echo "***REMOVED***" | sudo -S $(QEMU_PATH) \
+	sudo $(QEMU_PATH) \
 	-enable-kvm \
 	-cpu EPYC-v4,host-phys-bits=true  \
 	-machine q35,confidential-guest-support=sev0,memory-backend=ram1 \

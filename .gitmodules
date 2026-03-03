@@ -1,7 +1,7 @@
 [submodule "edk2"]
 	path = edk2
 	url = https://github.com/saoirse077/edk2-wallet.git
-	branch = svsm
+	branch = multithread
 [submodule "linux"]
 	path = linux
 	url = https://github.com/Sabanic-P/linux.git
@@ -9,7 +9,7 @@
 [submodule "svsm"]
 	path = svsm
 	url = https://github.com/saoirse077/svsm-wallet.git
-	branch = mpk-dev
+	branch = multithread
 [submodule "client/snphost"]
 	path = client/snphost
 	url = https://github.com/virtee/snphost.git
@@ -31,3 +31,4 @@
 [submodule "wasmlet"]
 	path = wasmlet
 	url = https://github.com/saoirse077/wasmlet.git
+	branch = multithread

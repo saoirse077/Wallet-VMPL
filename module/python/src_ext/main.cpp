@@ -4,6 +4,7 @@
 
 #include <fcntl.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <sys/ioctl.h>
 
 #include <cstdint>
