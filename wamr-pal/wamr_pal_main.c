@@ -14,6 +14,7 @@
 #include "pal_string.h"
 #include "wasmlet.h"
 #include "wasmlet_platform.h"
+#include "logging.h"
 
 #define INPUT_CHANNEL_ADDR   0x28000000000ULL
 #define OUTPUT_CHANNEL_ADDR  0x30000000000ULL
@@ -122,6 +123,7 @@ void wamr_pal_main(void)
         pal_svsm_exit(1);
         while (1) {}
     }
+    log_init(NULL, config.log_level, false);
     pal_svsm_debug_print("[WAMR-PAL] Runtime initialized\n");
     PRINT_PKRU("after runtime_init");
 
@@ -354,7 +356,11 @@ static void handle_get_result(struct input_header *hdr, volatile uint8_t *input)
     int ret = wasmlet_get_result(request_id, &result);
 
     if (ret == WASMLET_SUCCESS) {
-        write_output_channel(0, (uint32_t)result.return_value);
+        if (result.status == EXEC_STATUS_SUCCESS) {
+            write_output_channel(0, (uint32_t)result.return_value);
+        } else {
+            write_output_channel((uint32_t)result.status, 0);
+        }
     } else if (ret == WASMLET_ERROR_PENDING) {
         write_output_channel(0xFD, 0);
     } else {
