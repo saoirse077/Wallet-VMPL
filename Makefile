@@ -110,10 +110,9 @@ submodules:
 	git submodule update --init --recursive edk2
 	cd edk2; git apply ../patches/ovmf_outb.patch
 	cd svsm/kernel/src/my_crypto/; ./build.sh
-	git submodule update --init --recursive gramine-svsm;
 	git submodule update --init --recursive Benchmarks/SeBS;
 
-prepare_all: submodules build_svsm gramine guest.qcow2 setup_guest_net
+prepare_all: submodules build_svsm guest.qcow2 setup_guest_net
 
 initialize:
 	cd svsm/kernel/src/my_crypto/; ./build.sh
@@ -220,7 +219,7 @@ load_kvm:
 	make -C host/ load_kvm
 
 copy_pal:
-	cp gramine-svsm/build/pal/src/host/svsm/libpal.so module/
+	cp wamr-pal/wamr_pal.elf module/
 
 
 python:
