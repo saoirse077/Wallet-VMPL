@@ -13,23 +13,7 @@
  * All memory allocation is delegated to pal_malloc (dlmalloc mspace).
  * All output goes through pal_svsm_debug_print (CPUID trap to VMPL0).
  */
-/*
- * vmpl1_platform.c - 面向裸机 VMPL1 的 WAMR 平台核心实现
- *
- * 实现了 platform_api_vmcore.h 中定义的“Section 1”接口：
- *   - bh_platform_init / bh_platform_destroy
- *   - os_malloc / os_realloc / os_free
- *   - os_printf / os_vprintf
- *   - os_set_print_function
- *   - os_dumps_proc_mem_info
- *   - os_dcache_flush / os_icache_flush
- *   - os_is_handle_valid / putchar / puts
- *
- * 所有内存分配都委托给 pal_malloc（基于 dlmalloc 的 mspace）。
- * 所有输出都通过 pal_svsm_debug_print 完成
- * （通过 CPUID trap 切换到 VMPL0 执行）。
- */
- 
+
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
 #include "../../pal_monitor_call.h"

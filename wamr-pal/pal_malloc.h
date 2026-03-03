@@ -6,15 +6,6 @@
  *
  * Call pal_heap_init() once at startup before any malloc/free.
  */
-/*
- * pal_malloc.h - 面向裸机 VMPL1 的堆分配器
- *
- * 使用 pal_svsm_virt_alloc（通过 CPUID 触发陷入）从 VMPL0
- * 申请一大块内存，然后在其之上运行 dlmalloc 的 mspace 分配器。
- *
- * 在调用任何 malloc/free 之前，必须在启动阶段调用一次
- * pal_heap_init() 进行初始化。
- */
 #ifndef PAL_MALLOC_H
 #define PAL_MALLOC_H
 

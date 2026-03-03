@@ -7,15 +7,6 @@
  * GCC freestanding headers (stdint.h, stddef.h, stdbool.h, stdarg.h)
  * are the ONLY system headers we use.
  */
- /*
- * pal_string.h - 面向裸机 VMPL1 环境的精简 libc 替代实现
- *
- * 为 WAMR 提供其所需的最基础的字符串、内存操作和格式化函数。
- * 不依赖 glibc 或 musl —— 所有函数均为手写实现。
- *
- * 唯一使用的系统头文件是 GCC 提供的 freestanding 头文件：
- * stdint.h、stddef.h、stdbool.h、stdarg.h。
- */
 
 #ifndef PAL_STRING_H
 #define PAL_STRING_H

@@ -85,25 +85,17 @@ void wamr_pal_main(void)
 {
     int ret;
 
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
     pal_svsm_debug_print("[WAMR-PAL] WAMR Runtime Starting (wasmlet)\n");
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
-
     PRINT_PKRU("startup");
 
     /* Phase A: Initialization */
-    pal_svsm_debug_print("[WAMR-PAL] Initializing heap...\n");
     ret = pal_heap_init();
     if (ret != 0) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: Heap init failed\n");
         pal_svsm_exit(1);
-        while (1) {}
     }
 
     g_thread_capacity = pal_svsm_query_thread_capacity();
-    pal_svsm_debug_print("[WAMR-PAL] Thread capacity: ");
-    pal_svsm_debug_print_dec((int)g_thread_capacity);
-    pal_svsm_debug_print("\n");
 
     wasmlet_config_t config;
     memset(&config, 0, sizeof(config));
@@ -116,24 +108,18 @@ void wamr_pal_main(void)
     config.mpk_exec_heap_size = 8 * 1024 * 1024;
     config.log_level = 1; /* INFO */
 
-    pal_svsm_debug_print("[WAMR-PAL] Initializing wasmlet runtime...\n");
     ret = wasmlet_runtime_init(&config);
     if (ret != 0) {
         pal_svsm_debug_print("[WAMR-PAL] FATAL: wasmlet_runtime_init failed\n");
         pal_svsm_exit(1);
-        while (1) {}
     }
     log_init(NULL, config.log_level, false);
-    pal_svsm_debug_print("[WAMR-PAL] Runtime initialized\n");
+    pal_svsm_debug_print("[WAMR-PAL] Runtime initialized, suspending...\n");
     PRINT_PKRU("after runtime_init");
-
-    pal_svsm_debug_print("[WAMR-PAL] Initialization complete, suspending...\n");
     pal_svsm_exit(0);
 
     /* Phase B: Enter command loop. Workers start lazily on first async op. */
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
     pal_svsm_debug_print("[WAMR-PAL] Phase B: command dispatch ready\n");
-    pal_svsm_debug_print("[WAMR-PAL] ================================\n");
 
     int should_exit = 0;
     for (;;) {
@@ -186,7 +172,6 @@ void wamr_pal_main(void)
             break;
         }
     }
-    while (1) {}
 }
 
 /* ========== Command handlers ========== */

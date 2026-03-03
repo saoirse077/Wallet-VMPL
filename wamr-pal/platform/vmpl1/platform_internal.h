@@ -11,21 +11,7 @@
  * <stdlib.h>, <math.h>, <pthread.h>, etc. with our own freestanding
  * equivalents from pal_string.h / pal_malloc.h / pal_spinlock.h.
  */
-/*
- * platform_internal.h - 面向裸机 VMPL1 的 WAMR 平台适配层
- *
- * 这个头文件是 WAMR 的 platform_common.h 首先包含的文件。
- * 它必须提供：
- *   1. WAMR 所期望的所有类型定义（如 korp_mutex、korp_cond、korp_thread 等）
- *   2. WAMR 使用到的所有类似标准库的函数声明
- *   3. 用于禁用裸机环境中不可用功能的宏定义
- *
- * 我们使用自己实现的 freestanding 版本
- * （来自 pal_string.h / pal_malloc.h / pal_spinlock.h）
- * 来替代 SGX 平台中的 <inttypes.h>、<string.h>、<stdio.h>、
- * <stdlib.h>、<math.h>、<pthread.h> 等标准头文件。
- */
- 
+
 #ifndef _PLATFORM_INTERNAL_H
 #define _PLATFORM_INTERNAL_H
 

@@ -6,14 +6,6 @@
  * and definitions that dlmalloc expects from system headers but that are
  * unavailable in a freestanding build.
  */
-/*
- * pal_dlmalloc_config.h - 面向 freestanding 环境的 dlmalloc 适配层
- *
- * 在我们的裸机 VMPL1 环境中编译 dlmalloc 时，
- * 该头文件会通过 -include 选项被强制包含。
- * 它提供了 dlmalloc 期望从系统头文件中获得的最小声明和定义，
- * 而这些内容在 freestanding 编译环境中是不可用的。
- */
 #ifndef WAMR_PAL_DLMALLOC_CONFIG_H_
 #define WAMR_PAL_DLMALLOC_CONFIG_H_
 

@@ -8,16 +8,6 @@
  *   - Use RDTSC instruction (x86-64 timestamp counter)
  *   - Add a CPUID trap to read VMPL0's clock
  */
- /*
- * vmpl1_time.c - 面向裸机 VMPL1 的 WAMR 时间相关接口实现
- *
- * 在裸机 VMPL1 环境中，我们没有可用的时钟源。
- * 因此这两个时间相关函数都直接返回 0。
- *
- * 如果将来需要精确计时，可以考虑：
- *   - 使用 RDTSC 指令（x86-64 的时间戳计数器）
- *   - 增加一个 CPUID trap，通过 VMPL0 读取其时钟
- */
 
 #include "platform_api_vmcore.h"
 

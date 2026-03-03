@@ -16,25 +16,6 @@
  *   0x0280_0000_0000    Input channel (SVSM fixed mapping)
  *   0x0300_0000_0000    Output channel (SVSM fixed mapping)
  */
- /*
- * vmpl1_mmap.c - 面向裸机 VMPL1 的 WAMR 内存映射接口实现
- *
- * 实现了 os_mmap / os_munmap / os_mprotect / os_mremap。
- *
- * 在裸机 VMPL1 环境中，不存在操作系统的虚拟内存管理器。
- * 我们维护了一个简单的“线性递增分配器”（bump allocator），
- * 从专用地址范围（0x50_0000_0000 起）分配页对齐的内存区域。
- *
- * 每次分配都会调用 pal_svsm_virt_alloc()，
- * 请求 VMPL0 的 Monitor 为这些虚拟页分配并映射物理内存。
- *
- * 地址空间布局：
- *   0x0000_0000_0000 .. ELF 代码/数据段（pal_start.S, .text, .data, .bss）
- *   0x0040_0000_0000    堆（dlmalloc mspace，16MB，来自 pal_malloc.c）
- *   0x0050_0000_0000    MMAP 区域（本文件管理，向高地址增长）
- *   0x0280_0000_0000    输入通道（SVSM 固定映射）
- *   0x0300_0000_0000    输出通道（SVSM 固定映射）
- */
 
 #include "platform_api_vmcore.h"
 #include "../../pal_monitor_call.h"

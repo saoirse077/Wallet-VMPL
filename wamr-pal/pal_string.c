@@ -4,12 +4,6 @@
  * Hand-written implementations of string, memory, formatting, and utility
  * functions needed by WAMR.  No external dependencies except our own headers.
  */
- /*
- * pal_string.c - 面向裸机 VMPL1 环境的精简 libc 替代实现
- *
- * 手写实现了 WAMR 所需的字符串处理、内存操作、格式化以及工具函数。
- * 除了我们自己的头文件外，不依赖任何外部库。
- */
 
 #include "pal_string.h"
 #include "pal_monitor_call.h"   /* pal_svsm_exit, pal_svsm_debug_print */
@@ -620,18 +614,9 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
  * Math stubs — for WASM floating-point opcodes
  *
  * The classic interpreter uses these for f32/f64 math operations.
- * Our Phase 2 test only uses integer add, so these are never called
- * at runtime.  We use GCC builtins where available for correctness
+ * Our test only uses integer add, so these are never called at
+ * runtime.  We use GCC builtins where available for correctness
  * in case they are ever reached.
- *
- * 数学函数桩（Math stubs）——用于 WASM 的浮点操作码
- *
- * 经典解释器在执行 f32 / f64 数学运算时会调用这些函数。
- * 我们当前的 Phase 2 测试只使用整数加法，因此这些函数在运行时
- * 实际上不会被调用。
- *
- * 为了保证正确性（以防未来真的执行到这些路径），
- * 在可用的情况下我们使用 GCC 内建函数（builtins）来实现。
  * ================================================================ */
 
 double fabs(double x)  { return x < 0 ? -x : x; }

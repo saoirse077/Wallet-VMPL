@@ -4,28 +4,10 @@
  * In our bare-metal environment there is no pthread_mutex.
  * We use a simple test-and-set spinlock with PAUSE hint.
  *
- * For Phase 2 (single vCPU, single thread), the lock is never contended.
- * But we implement it correctly for future multi-vCPU support.
- *
  * Usage:
  *   pal_spinlock_t lock = PAL_SPINLOCK_INIT;
  *   pal_spin_lock(&lock);
  *   // critical section
- *   pal_spin_unlock(&lock);
- */
-/*
- * pal_spinlock.h - 面向裸机 VMPL1 的自旋锁实现
- *
- * 在我们的裸机环境中不存在 pthread_mutex。
- * 因此我们使用基于 test-and-set 的简单自旋锁，并配合 PAUSE 指令提示。
- *
- * 在 Phase 2（单 vCPU、单线程）阶段，锁实际上不会发生竞争。
- * 但我们仍然按照正确方式实现，以便未来支持多 vCPU 场景。
- *
- * 使用方法：
- *   pal_spinlock_t lock = PAL_SPINLOCK_INIT;
- *   pal_spin_lock(&lock);
- *   // 临界区
  *   pal_spin_unlock(&lock);
  */
 #ifndef PAL_SPINLOCK_H
