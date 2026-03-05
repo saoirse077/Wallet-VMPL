@@ -53,6 +53,18 @@ class Wallet:
             raise Exception("Cannot attest monitor - not initialized!")
         return _w.attest_monitor()
 
+    def attest_wamr_runtime(self, process_id: int) -> str:
+        """Phase 4: Request WAMR Runtime attestation (type=1)."""
+        if not self.fd:
+            raise Exception("Cannot attest - not initialized!")
+        return _w.attest_wamr_runtime(process_id)
+
+    def attest_wasm_module(self, process_id: int, module_id: int = 0) -> str:
+        """Phase 4: Request WASM Module attestation (type=2)."""
+        if not self.fd:
+            raise Exception("Cannot attest - not initialized!")
+        return _w.attest_wasm_module(process_id, module_id)
+
     # helper functions for attestation microbenchmarks
     def measure_monitor_cold(self):
         if not self.fd:
@@ -84,6 +96,14 @@ class Trustlet(TrustedProcess):
     def __init__(self, process_id):
         TrustedProcess.__init__(self, process_id)
 
+    def attest_wamr_runtime(self) -> str:
+        """Phase 4: Request WAMR Runtime attestation for this trustlet."""
+        return _w.attest_wamr_runtime(self.process_id)
+
+    def attest_wasm_module(self, module_id: int = 0) -> str:
+        """Phase 4: Request WASM Module attestation for this trustlet."""
+        return _w.attest_wasm_module(self.process_id, module_id)
+
     def invoke_trustlet_bin(self, argument: bytes, output_size: int) -> bytes:
         ret = _w.invoke_trustlet_bin(self.process_id, argument, output_size)
         return ret
@@ -97,9 +117,12 @@ class Trustlet(TrustedProcess):
         return ret
 
     def attest_execution(
-        self, input: str, input_len: int, output: str, output_len: int
+        self, input: str, input_len: int, output: str, output_len: int,
+        module_id: int = 0
     ) -> str:
-        ret = _w.attest_execution(self.process_id, input, input_len, output, output_len)
+        """Phase 4: Request function execution attestation (type=3).
+        Includes init + runtime + wasm_module + env_hash + input_hash + output_hash."""
+        ret = _w.attest_execution(self.process_id, module_id, input, input_len, output, output_len)
         return ret
 
     # helper functions for attestation microbenchmarks
@@ -130,6 +153,10 @@ class Trustlet(TrustedProcess):
 class Zygote(TrustedProcess):
     def __init__(self, process_id):
         TrustedProcess.__init__(self, process_id)
+
+    def attest_wamr_runtime(self) -> str:
+        """Phase 4: Request WAMR Runtime attestation for this zygote."""
+        return _w.attest_wamr_runtime(self.process_id)
 
     def create_trustlet(self, function_code: FileName) -> Trustlet:
         if not Path(function_code).exists():

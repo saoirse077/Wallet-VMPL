@@ -1,4 +1,5 @@
-SRCS:=$(wildcard src/*.c)
+# SRCS:=$(wildcard src/*.c)  修改好microbenchmark后，将attest_microbenchmark.c添加到SRCS中
+SRCS:=$(filter-out src/attest_microbenchmark.c, $(wildcard src/*.c))
 OBJS:=${SRCS:c=o}
 
 CFLAGS=-o3 -fpic

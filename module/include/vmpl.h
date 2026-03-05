@@ -35,8 +35,8 @@ enum monitor_call_type {
 
 enum attestation_report_type {
     monitorAttestation = 0,
-    zygoteAttestation = 1,
-    trustletAttestation = 2,
+    wamrRuntimeAttestation = 1,     /* 原 zygoteAttestation */
+    wasmModuleAttestation = 2,      /* 原 trustletAttestation */
     functionAttestation = 3,
     /* helper attestation options for microbenchmarks */
     monitorAttestationCold = 4,
@@ -70,6 +70,7 @@ struct monitor_call {
             void* address;
             uint64_t process_id;
             void* function_data_ptr;
+            uint64_t module_id;                    /* Phase 4: WASM 模块 ID */
             enum attestation_report_type type;
         } monitor_attestation;
         void* attestation_target; /* contains the buffer to store the result */
@@ -114,8 +115,8 @@ struct monitor_call {
 // NOTE: used for testing for now
 #define MAX_PATH_SIZE 256
 #define MONITOR_ATTESTATION_REPORT_PATH "monitor_attestation_report"
-#define ZYGOTE_ATTESTATION_REPORT_PATH "zygote_attestation_report"
-#define TRUSTLET_ATTESTATION_REPORT_PATH "trustlet_attestation_report"
+#define WAMR_RUNTIME_ATTESTATION_REPORT_PATH "wamr_runtime_attestation_report"
+#define WASM_MODULE_ATTESTATION_REPORT_PATH "wasm_module_attestation_report"
 #define FUNCTION_ATTESTATION_REPORT_PATH "function_attestation_report"
 
 typedef struct {
@@ -159,13 +160,13 @@ static Field fields[] = {
     {"COMMITTED_MAJOR", 0x1EE, 1},
     {"LAUNCH_TCB", 0x1F0, 8},
     {"SIGNATURE", 0x2A0, 512},
-    {"INIT_MEASUREMENT", 0x4A0, 64},           // Wallet differential attestation field
-    {"MANIFEST_MEASUREMENT", 0x4E0, 64},       // Wallet differential attestation field
-    {"LIBOS_MEASUREMENT", 0x520, 64},          // Wallet differential attestation field
-    {"FUNCTION_MEASUREMENT", 0x560, 64},       // Wallet differential attestation field
-    {"FUNCTION_INPUT_MEASUREMENT", 0x5A0, 64}, // Wallet differential attestation field
-    {"FUNCTION_OUTPUT_MEASUREMENT", 0x5E0, 64},// Wallet differential attestation field
-    {"WALLET_SIGNATURE", 0x620, 64}            // Wallet differential attestation field
+    {"INIT_MEASUREMENT",           0x4A0, 64},  // Phase 4: WAMR PAL ELF 哈希
+    {"RUNTIME_MEASUREMENT",        0x4E0, 64},  // Phase 4: WAMR Runtime 配置哈希
+    {"WASM_MODULE_MEASUREMENT",    0x520, 64},  // Phase 4: WASM 模块哈希
+    {"ENV_HASH",                   0x560, 64},  // Phase 4: 实例化环境哈希
+    {"FUNCTION_INPUT_MEASUREMENT", 0x5A0, 64},  // Phase 4: 输入数据哈希
+    {"FUNCTION_OUTPUT_MEASUREMENT",0x5E0, 64},  // Phase 4: 输出数据哈希
+    {"WALLET_SIGNATURE",           0x620, 64}   // Phase 4: 签名
 };
 /* End of attestation dump-related defs */
 

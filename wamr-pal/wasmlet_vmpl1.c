@@ -15,6 +15,7 @@
 #include "pal_monitor_call.h"
 #include "pal_malloc.h"
 #include "pal_string.h"
+#include "sha512_simple.h"
 
 /* WAMR public API */
 #include "wasm_export.h"
@@ -37,6 +38,19 @@ static int g_domain_created = 0;
 #define WASM_STACK_SIZE  (32 * 1024)  /* 32KB stack for WASM instance */
 #define WASM_HEAP_SIZE   (32 * 1024)  /* 32KB heap for WASM instance */
 #define MPK_MODULE_HEAP  (4 * 1024 * 1024)  /* 4MB MPK domain for module */
+
+/* Phase 4: Output channel address for env_hash writing */
+#define OUTPUT_CHANNEL_ADDR_ENVHASH  0x30000000000ULL
+#define ENV_HASH_OUTPUT_OFFSET       8   /* offset in output channel: after status(4) + result(4) */
+
+/* Phase 4: Environment snapshot structure for attestation */
+struct env_snapshot {
+    uint64_t linear_mem_base;   /* base address of WASM linear memory */
+    uint32_t linear_mem_size;   /* current size of linear memory */
+    uint32_t stack_size;        /* WASM stack size (config) */
+    uint32_t heap_size;         /* WASM heap size (config) */
+    uint32_t global_count;      /* number of globals in module */
+};
 
 /* ============ 第一层：Runtime 生命周期 ============ */
 
@@ -252,6 +266,54 @@ int wasmlet_invoke(const char *func_name, int argc,
     if (!exec_env) {
         pal_svsm_debug_print("[WASMLET] Create exec env failed\n");
         goto cleanup;
+    }
+
+    /* Phase 4: Compute env_hash (environment snapshot after instantiation)
+     * and write it to the output channel at offset 8 for SVSM to read.
+     * This must happen after exec_env creation and before function execution. */
+    {
+        struct env_snapshot snap;
+        uint8_t env_hash[SHA512_DIGEST_SIZE];
+        volatile uint8_t *output_ch;
+        int ei;
+
+        /* Populate snapshot from WAMR instance metadata */
+        snap.linear_mem_base = (uint64_t)wasm_runtime_addr_app_to_native(inst, 0);
+        /* Get memory size: use page count * 64KB (WASM page size) */
+        {
+            wasm_memory_inst_t mem = wasm_runtime_get_memory(inst, 0);
+            if (mem) {
+                uint64_t pages = wasm_memory_get_cur_page_count(mem);
+                snap.linear_mem_size = (uint32_t)(pages * 65536);
+            } else {
+                snap.linear_mem_size = 0;
+            }
+        }
+        snap.stack_size = WASM_STACK_SIZE;
+        snap.heap_size = WASM_HEAP_SIZE;
+        snap.global_count = 0; /* Simplified: not exposed via public API */
+
+        pal_svsm_debug_print("[WASMLET] Computing env_hash: mem_base=");
+        pal_svsm_debug_print_hex(snap.linear_mem_base);
+        pal_svsm_debug_print(", mem_size=");
+        pal_svsm_debug_print_dec((int)snap.linear_mem_size);
+        pal_svsm_debug_print(", stack=");
+        pal_svsm_debug_print_dec((int)snap.stack_size);
+        pal_svsm_debug_print(", heap=");
+        pal_svsm_debug_print_dec((int)snap.heap_size);
+        pal_svsm_debug_print("\n");
+
+        /* Compute SHA-512 of the snapshot */
+        sha512_simple(&snap, sizeof(snap), env_hash);
+
+        /* Write env_hash to output channel at offset 8
+         * (output channel is inflated by wamr_pal_main.c before invoke) */
+        output_ch = (volatile uint8_t *)OUTPUT_CHANNEL_ADDR_ENVHASH;
+        for (ei = 0; ei < SHA512_DIGEST_SIZE; ei++) {
+            output_ch[ENV_HASH_OUTPUT_OFFSET + ei] = env_hash[ei];
+        }
+
+        pal_svsm_debug_print("[WASMLET] env_hash written to output channel\n");
     }
 
     /* 3. 查找函数 */

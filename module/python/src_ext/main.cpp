@@ -18,7 +18,7 @@ namespace py = pybind11;
 extern "C" {
 #include "../../include/vmpl.h"
 #include <attest.h>
-#include <attest_microbenchmark.h>
+// #include <attest_microbenchmark.h>  // Phase 4: 临时注释，microbenchmark 暂不编译
 #include <lib.h>
 #include <monitor.h>
 #include <sys/io.h>
@@ -63,10 +63,16 @@ PYBIND11_MODULE(_wallet, m) {
         py::arg("args"), py::arg("output_size"));
   m.def("delete_trustlet", &delete_trustlet, py::arg("trustlet_id"));
   m.def("attest_monitor", &attest_monitor);
+  m.def("attest_wamr_runtime", &attest_wamr_runtime,
+        py::arg("process_id"));
+  m.def("attest_wasm_module", &attest_wasm_module,
+        py::arg("process_id"), py::arg("module_id"));
   m.def("attest_execution", &attest_execution, py::arg("trusted_process_id"),
-        py::arg("input"), py::arg("input_len"), py::arg("output"),
-        py::arg("output_len"));
+        py::arg("module_id"), py::arg("input"), py::arg("input_len"),
+        py::arg("output"), py::arg("output_len"));
   /* helper functions for attestation microbenchmark */
+  // Phase 4: 临时注释 microbenchmark 绑定，因为 attest_microbenchmark.c 暂不编译
+  /*
   m.def("measure_monitor_cold", &measure_monitor_cold);
   m.def("measure_monitor_hot", &measure_monitor_hot);
   m.def("prepare_measure_zygote_cold", &prepare_measure_zygote_cold,
@@ -84,6 +90,7 @@ PYBIND11_MODULE(_wallet, m) {
   m.def("measure_function", &measure_function, py::arg("trusted_process_id"),
         py::arg("input"), py::arg("input_len"), py::arg("output"),
         py::arg("output_len"));
+  */
   /* end of helper functions for attestation microbenchmark */
   /*Getting status of Wallet #pf, pvalidate, cow*/
   m.def("stat_get", []() {

@@ -59,20 +59,23 @@ static long diff_attestation(struct monitor_call* mcall){
   {
     case monitorAttestation:
       break;
-    case zygoteAttestation:
-      /* fall through */
-    case trustletAttestation:
+    case wamrRuntimeAttestation:
       call.r8 = mcall->monitor_attestation.process_id;
+      break;
+    case wasmModuleAttestation:
+      call.r8 = mcall->monitor_attestation.process_id;
+      call.r9 = mcall->monitor_attestation.module_id;
       break;
     case functionAttestation:
       call.r8 = get_pgd_phys();
       /*
-        4k structure that includes the following:
-        1. trustlet_id as a uint64_t
-        2. fnInputSize as a uint64_t
-        3. fnInput as a void* ptr
-        4. fnOutputSize as a uint64_t
-        5. fnOutput as a void* ptr
+        Phase 4 updated function_data structure:
+        1. trustletId as a uint64_t
+        2. moduleId as a uint64_t (new)
+        3. fnInputSize as a uint64_t
+        4. fnInput as a void* ptr
+        5. fnOutputSize as a uint64_t
+        6. fnOutput as a void* ptr
       */
       call.r9 = mcall->monitor_attestation.function_data_ptr;
       break;

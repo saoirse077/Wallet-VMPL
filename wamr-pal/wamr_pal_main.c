@@ -75,6 +75,8 @@
  * Output channel protocol (at 0x300_0000_0000):
  *   [0..3]   uint32_t status   // 0 = success, non-zero = error code
  *   [4..7]   uint32_t result   // Function return value (i32)
+ *   [8..71]  uint8_t  env_hash[64]  // Phase 4: SHA-512 of instantiation environment
+ *                                    // Written by wasmlet_invoke() before function call
  */
 
 #include "pal_monitor_call.h"
@@ -123,8 +125,13 @@ static inline uint32_t align4(uint32_t v)
  * During invoke_trustlet, SVSM inflates the output channel pages.
  *
  * Format:
- *   [0..3]  uint32_t status   // 0 = success, 1 = error
- *   [4..7]  uint32_t result   // function return value
+ *   [0..3]  uint32_t status       // 0 = success, 1 = error
+ *   [4..7]  uint32_t result       // function return value
+ *   [8..71] uint8_t  env_hash[64] // Phase 4: written by wasmlet_invoke()
+ *
+ * Note: This function only writes status and result (offsets 0-7).
+ * The env_hash at offset 8 is written by wasmlet_invoke() before
+ * this function is called, and is preserved.
  */
 static void write_output_channel(uint32_t status, uint32_t result)
 {

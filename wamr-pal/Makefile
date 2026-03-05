@@ -30,7 +30,8 @@ BUILD_DIR    := build/wamr
 # Source files — PAL core
 # ============================================================================
 PAL_C_SRCS := pal_monitor_call.c pal_string.c pal_malloc.c \
-              mpk_allocator_vmpl1.c wasmlet_vmpl1.c wamr_pal_main.c
+              mpk_allocator_vmpl1.c wasmlet_vmpl1.c wamr_pal_main.c \
+              sha512_simple.c
 
 PAL_S_SRCS := arch/x86_64/pal_start.S
 
