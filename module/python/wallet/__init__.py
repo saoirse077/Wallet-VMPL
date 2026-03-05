@@ -126,22 +126,18 @@ class Trustlet(TrustedProcess):
         return ret
 
     # helper functions for attestation microbenchmarks
-    def prepare_measure_trustlet_cold(self):
-        _w.prepare_measure_trustlet_cold(self.process_id)
+    def measure_wasm_module_cold(self, module_id: int = 0):
+        _w.measure_wasm_module_cold(self.process_id, module_id)
         return
 
-    def measure_trustlet_cold(self):
-        _w.measure_trustlet_cold(self.process_id)
-        return
-
-    def measure_trustlet_hot(self):
-        _w.measure_trustlet_hot(self.process_id)
+    def measure_wasm_module_hot(self, module_id: int = 0):
+        _w.measure_wasm_module_hot(self.process_id, module_id)
         return
 
     def measure_function(
-        self, input: str, input_len: int, output: str, output_len: int
+        self, module_id: int, input: str, input_len: int, output: str, output_len: int
     ):
-        _w.measure_function(self.process_id, input, input_len, output, output_len)
+        _w.measure_function(self.process_id, module_id, input, input_len, output, output_len)
         return
 
     # end of helper functions for attestation microbenchmarks
@@ -169,16 +165,16 @@ class Zygote(TrustedProcess):
         return Trustlet(trustlet_id)
 
     # helper functions for attestation microbenchmarks
-    def prepare_measure_zygote_cold(self):
-        _w.prepare_measure_zygote_cold(self.process_id)
+    def prepare_measure_wamr_runtime_cold(self):
+        _w.prepare_measure_wamr_runtime_cold(self.process_id)
         return
 
-    def measure_zygote_cold(self):
-        _w.measure_zygote_cold(self.process_id)
+    def measure_wamr_runtime_cold(self):
+        _w.measure_wamr_runtime_cold(self.process_id)
         return
 
-    def measure_zygote_hot(self):
-        _w.measure_zygote_hot(self.process_id)
+    def measure_wamr_runtime_hot(self):
+        _w.measure_wamr_runtime_hot(self.process_id)
         return
 
     # end of helper functions for attestation microbenchmarks

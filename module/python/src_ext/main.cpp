@@ -18,7 +18,7 @@ namespace py = pybind11;
 extern "C" {
 #include "../../include/vmpl.h"
 #include <attest.h>
-// #include <attest_microbenchmark.h>  // Phase 4: 临时注释，microbenchmark 暂不编译
+#include <attest_microbenchmark.h>
 #include <lib.h>
 #include <monitor.h>
 #include <sys/io.h>
@@ -71,26 +71,21 @@ PYBIND11_MODULE(_wallet, m) {
         py::arg("module_id"), py::arg("input"), py::arg("input_len"),
         py::arg("output"), py::arg("output_len"));
   /* helper functions for attestation microbenchmark */
-  // Phase 4: 临时注释 microbenchmark 绑定，因为 attest_microbenchmark.c 暂不编译
-  /*
   m.def("measure_monitor_cold", &measure_monitor_cold);
   m.def("measure_monitor_hot", &measure_monitor_hot);
-  m.def("prepare_measure_zygote_cold", &prepare_measure_zygote_cold,
-        py::arg("trusted_process_id"));
-  m.def("measure_zygote_cold", &measure_zygote_cold,
-        py::arg("trusted_process_id"));
-  m.def("measure_zygote_hot", &measure_zygote_hot,
-        py::arg("trusted_process_id"));
-  m.def("prepare_measure_trustlet_cold", &prepare_measure_trustlet_cold,
-        py::arg("trusted_process_id"));
-  m.def("measure_trustlet_cold", &measure_trustlet_cold,
-        py::arg("trusted_process_id"));
-  m.def("measure_trustlet_hot", &measure_trustlet_hot,
-        py::arg("trusted_process_id"));
-  m.def("measure_function", &measure_function, py::arg("trusted_process_id"),
-        py::arg("input"), py::arg("input_len"), py::arg("output"),
-        py::arg("output_len"));
-  */
+  m.def("prepare_measure_wamr_runtime_cold", &prepare_measure_wamr_runtime_cold,
+        py::arg("process_id"));
+  m.def("measure_wamr_runtime_cold", &measure_wamr_runtime_cold,
+        py::arg("process_id"));
+  m.def("measure_wamr_runtime_hot", &measure_wamr_runtime_hot,
+        py::arg("process_id"));
+  m.def("measure_wasm_module_cold", &measure_wasm_module_cold,
+        py::arg("process_id"), py::arg("module_id"));
+  m.def("measure_wasm_module_hot", &measure_wasm_module_hot,
+        py::arg("process_id"), py::arg("module_id"));
+  m.def("measure_function", &measure_function, py::arg("process_id"),
+        py::arg("module_id"), py::arg("input"), py::arg("input_len"),
+        py::arg("output"), py::arg("output_len"));
   /* end of helper functions for attestation microbenchmark */
   /*Getting status of Wallet #pf, pvalidate, cow*/
   m.def("stat_get", []() {

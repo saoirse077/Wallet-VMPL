@@ -1,0 +1,10 @@
+Measurement,Size (bytes),Average (ns),Median (ns),StdDev (ns)
+measure_monitor_cold,-,5809088.5,5795400.0,88627.23962131923
+measure_monitor_hot,-,38357,25905.0,22537.777899153654
+measure_wamr_runtime_cold,-,34551,31660.0,9997.744956265204
+measure_wamr_runtime_hot,-,21543.5,19645.0,5693.475744449218
+measure_wasm_module_cold,-,26193,23990.0,6827.389961340316
+measure_wasm_module_hot,-,20150,18395.0,5313.787429141785
+measure_function,64,190424,151365.0,109107.92751361283
+measure_function,1024,193044,182130.0,43234.22589131269
+measure_function,4096,279054,257840.0,56388.2510532301

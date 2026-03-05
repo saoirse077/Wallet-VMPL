@@ -40,10 +40,9 @@ enum attestation_report_type {
     functionAttestation = 3,
     /* helper attestation options for microbenchmarks */
     monitorAttestationCold = 4,
-    prepareZygoteAttestationCold = 5,
-    zygoteAttestationCold = 6,
-    prepareTrustletAttestationCold = 7,
-    trustletAttestationCold = 8,
+    prepareWamrRuntimeAttestationCold = 5,
+    wamrRuntimeAttestationCold = 6,
+    wasmModuleAttestationCold = 7,
     /* end of helper attestation options for microbenchmarks */
     maxAttestationReportType,
 };

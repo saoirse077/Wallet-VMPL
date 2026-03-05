@@ -83,11 +83,13 @@ static long diff_attestation(struct monitor_call* mcall){
     /* helper attestation options for microbenchmarks */
     case monitorAttestationCold:
       break;
-    case prepareZygoteAttestationCold:
-    case zygoteAttestationCold:
-    case prepareTrustletAttestationCold:
-    case trustletAttestationCold:
+    case prepareWamrRuntimeAttestationCold:
+    case wamrRuntimeAttestationCold:
       call.r8 = mcall->monitor_attestation.process_id;
+      break;
+    case wasmModuleAttestationCold:
+      call.r8 = mcall->monitor_attestation.process_id;
+      call.r9 = mcall->monitor_attestation.module_id;
       break;
     /* end of helper attestation options for microbenchmarks */
 
