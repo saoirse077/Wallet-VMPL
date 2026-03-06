@@ -16,9 +16,10 @@ enum monitor_call_type {
     loadPolicy,
     createZygote,
     deleteZygote,
-    createTrustlet,
-    deleteTrustlet,
-    invokeTrustlet = 8,
+    /* [NO-TRUSTLET] Trustlet 创建/删除已禁用，枚举值保留以维持数值不变 */
+    /* createTrustlet, */
+    /* deleteTrustlet, */
+    invokeTrustlet = 8, /* 语义变为 invoke Zygote，数值必须保持 =8 与 SVSM 侧对应 */
     waitForTrustletResult,
     createChannel,
     deleteChannel,
@@ -82,11 +83,12 @@ struct monitor_call {
             void* zygote_data;
             uint64_t size;
         } zygote;
-        struct {
+        /* [NO-TRUSTLET] trustlet union 成员已禁用 */
+        /* struct {
             void* trustlet_data;
             uint64_t size;
             tpid_t zygote;
-        } trustlet;
+        } trustlet; */
         struct {
             void* sender_pub_key;
             void* encrypted_data;

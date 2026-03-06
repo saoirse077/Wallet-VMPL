@@ -148,16 +148,8 @@ static long delete_zygote(struct monitor_call* mcall){
 	return 0;
 }
 
-/**
- * rax: call ID
- * rcx: Size of Trustlet data
- * rdx: ProcessID of Zygote
- * r8:  Trustlet data address 
- * 
- * return:
- * 	- ProcessID of Trustlet 
- *  - -1 if failed
-*/
+/* [NO-TRUSTLET] create_trustlet() 已禁用 — 不再从 Zygote 派生 Trustlet */
+/*
 static long create_trustlet(struct monitor_call* mcall){
 	struct svsm_call call;
 	int res;
@@ -171,6 +163,7 @@ static long create_trustlet(struct monitor_call* mcall){
 
 	return call.rcx;
 }
+*/
 
 static long invoke_trustlet(struct monitor_call* mcall) {
 	struct svsm_call call;
@@ -187,14 +180,8 @@ static long invoke_trustlet(struct monitor_call* mcall) {
 	return call.rcx;
 }
 
-/**
- * rax: call ID
- * rcx: ProcessID of Trustlet 
- * 
- * return:
- * 	-  0 on success
- *  - -1 on failure
-*/
+/* [NO-TRUSTLET] delete_trustlet() 已禁用 */
+/*
 static long delete_trustlet(struct monitor_call* mcall){
 	struct svsm_call call;
 	int res;
@@ -206,6 +193,7 @@ static long delete_trustlet(struct monitor_call* mcall){
 		return -1;
 	return 0;
 }
+*/
 
 /**
  * rax: call ID
@@ -343,12 +331,13 @@ static long parse_request(struct file *file, unsigned int cmd, unsigned long arg
 		return diff_attestation(&call);
 	case createZygote:
 		return create_zygote(&call);
-	case createTrustlet:
-		return create_trustlet(&call);
+	/* [NO-TRUSTLET] createTrustlet/deleteTrustlet 分支已禁用 */
+	/* case createTrustlet:
+		return create_trustlet(&call); */
 	case deleteZygote:
 		return delete_zygote(&call);
-	case deleteTrustlet:
-		return delete_trustlet(&call);
+	/* case deleteTrustlet:
+		return delete_trustlet(&call); */
 	case createChannel:
 		return create_channel(&call);
 	case get_public_key:

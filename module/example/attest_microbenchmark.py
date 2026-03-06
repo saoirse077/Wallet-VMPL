@@ -46,7 +46,8 @@ WAMR_PAL_ELF = "./wamr_pal.elf"
 DUMMY_MANIFEST = "./dummy.manifest"
 DUMMY_LIBOS = "./dummy.libos"
 WASM_FILE = "./add.wasm"
-DUMMY_FUNCTION = "./dummy_function.txt"
+# [NO-TRUSTLET] DUMMY_FUNCTION 不再需要
+# DUMMY_FUNCTION = "./dummy_function.txt"
 OUTPUT_SIZE = 4096
 
 
@@ -136,10 +137,10 @@ class Runner:
             if not os.path.exists(path):
                 missing.append(f"  {desc}: {path}")
 
-        # Create dummy_function.txt if not exists
-        if not os.path.exists(DUMMY_FUNCTION):
-            with open(DUMMY_FUNCTION, "w") as f:
-                f.write("dummy")
+        # [NO-TRUSTLET] dummy_function.txt 不再需要
+        # if not os.path.exists(DUMMY_FUNCTION):
+        #     with open(DUMMY_FUNCTION, "w") as f:
+        #         f.write("dummy")
 
         if missing:
             print("ERROR: Missing required files:")
@@ -153,7 +154,7 @@ class Runner:
         libos: FileName = DUMMY_LIBOS,
     ):
         print("=" * 70)
-        print("Phase 4 v2.0 Attestation Microbenchmark")
+        print("Phase 4 v2.0 Attestation Microbenchmark (NO-TRUSTLET)")
         print(f"  Repeats: {repeats}")
         print(f"  Function I/O sizes: {fn_in_out_sizes}")
         print("=" * 70)
@@ -178,13 +179,13 @@ class Runner:
         }
 
         # NOTE: Wallet-VMPL's PROCESS_STORE delete implementation has a bug:
-        # when a Trustlet is deleted, its VMSA page is freed back to the page
+        # when a process is deleted, its VMSA page is freed back to the page
         # allocator but the RMP VMSA flag is NOT cleared. When the page is
         # later re-allocated and the allocator tries to zero it, the write
         # fails silently (the page is still marked as VMSA in the RMP),
         # causing the system to hang.
         #
-        # Workaround: create Zygote/Trustlet ONCE, reuse across all iterations.
+        # [NO-TRUSTLET] Workaround: create Zygote ONCE, reuse across all iterations.
         # Only the microbenchmark ioctl calls are repeated; the process
         # lifecycle (create/invoke/shutdown) happens exactly once.
 
@@ -195,15 +196,15 @@ class Runner:
             # Create zygote (WAMR runtime initialization) — once
             zy = w.create_zygote(zygote, manifest, libos)
 
-            # Create trustlet (CoW copy of zygote) — once
-            tr = zy.create_trustlet(DUMMY_FUNCTION)
+            # [NO-TRUSTLET] 不再创建 Trustlet，直接在 Zygote 上 invoke
+            # tr = zy.create_trustlet(DUMMY_FUNCTION)
 
             # invoke_trustlet_bin to load WASM module (triggers WASM measurement)
             input_data = pack_input_load_and_invoke(wasm_bytes, "add", [3, 5])
-            tr.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
+            zy.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
             module_id = 0  # First loaded module
 
-            print("  Setup complete: Zygote, Trustlet, WASM module loaded.")
+            print("  Setup complete: Zygote + WASM module loaded (NO-TRUSTLET).")
             print()
 
             for i in range(repeats):
@@ -225,10 +226,10 @@ class Runner:
 
                 # WASM Module cold: mount input channel, re-measure WASM bytecode
                 results["measure_wasm_module_cold"].append(
-                    self.time_function(lambda: tr.measure_wasm_module_cold(module_id)))
+                    self.time_function(lambda: zy.measure_wasm_module_cold(module_id)))
                 # WASM Module hot: from cached wasm_module_measurements
                 results["measure_wasm_module_hot"].append(
-                    self.time_function(lambda: tr.measure_wasm_module_hot(module_id)))
+                    self.time_function(lambda: zy.measure_wasm_module_hot(module_id)))
 
                 # Function execution measurements for different input/output sizes
                 for size in fn_in_out_sizes:
@@ -236,7 +237,7 @@ class Runner:
                     fn_output = os.urandom(size)
                     results["measure_function"][size].append(
                         self.time_function(
-                            lambda s=size, fi=fn_input, fo=fn_output: tr.measure_function(
+                            lambda s=size, fi=fn_input, fo=fn_output: zy.measure_function(
                                 module_id, fi, len(fi), fo, len(fo))
                         )
                     )
@@ -244,7 +245,7 @@ class Runner:
             # Shutdown: send shutdown signal to clean up WASM runtime (once)
             try:
                 shutdown_data = pack_shutdown_signal()
-                tr.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
+                zy.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
             except Exception as e:
                 print(f"  Shutdown: {e}")
 

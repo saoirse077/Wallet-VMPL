@@ -49,8 +49,9 @@ PYBIND11_MODULE(_wallet, m) {
   m.def("create_zygote", &create_zygote, py::arg("zygote_path"),
         py::arg("manifest_path"), py::arg("libos_path"));
   m.def("delete_zygote", &delete_zygote, py::arg("zygote_id"));
-  m.def("create_trustlet", &create_trustlet, py::arg("zygote_id"),
-        py::arg("function_code"));
+  /* [NO-TRUSTLET] create_trustlet 绑定已禁用 */
+  // m.def("create_trustlet", &create_trustlet, py::arg("zygote_id"),
+  //       py::arg("function_code"));
   m.def(
       "invoke_trustlet_bin",
       [](const int trustlet_id, std::string args, uint64_t output_size) {
@@ -61,7 +62,8 @@ PYBIND11_MODULE(_wallet, m) {
       py::arg("trustlet_id"), py::arg("args"), py::arg("output_size"));
   m.def("invoke_trustlet", &invoke_trustlet, py::arg("trustlet_id"),
         py::arg("args"), py::arg("output_size"));
-  m.def("delete_trustlet", &delete_trustlet, py::arg("trustlet_id"));
+  /* [NO-TRUSTLET] delete_trustlet 绑定已禁用 */
+  // m.def("delete_trustlet", &delete_trustlet, py::arg("trustlet_id"));
   m.def("attest_monitor", &attest_monitor);
   m.def("attest_wamr_runtime", &attest_wamr_runtime,
         py::arg("process_id"));

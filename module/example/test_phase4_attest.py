@@ -46,7 +46,8 @@ WAMR_PAL_ELF = "./wamr_pal.elf"
 DUMMY_MANIFEST = "./dummy.manifest"
 DUMMY_LIBOS = "./dummy.libos"
 WASM_FILE = "./add.wasm"
-DUMMY_FUNCTION = "./dummy_function.txt"
+# [NO-TRUSTLET] DUMMY_FUNCTION 不再需要
+# DUMMY_FUNCTION = "./dummy_function.txt"
 OUTPUT_SIZE = 4096
 
 
@@ -62,10 +63,10 @@ def check_files():
         if not os.path.exists(path):
             missing.append(f"  {desc}: {path}")
 
-    # 创建 dummy_function.txt（create_trustlet 需要读取文件）
-    if not os.path.exists(DUMMY_FUNCTION):
-        with open(DUMMY_FUNCTION, "w") as f:
-            f.write("dummy")
+    # [NO-TRUSTLET] dummy_function.txt 不再需要
+    # if not os.path.exists(DUMMY_FUNCTION):
+    #     with open(DUMMY_FUNCTION, "w") as f:
+    #         f.write("dummy")
 
     if missing:
         print("ERROR: Missing required files:")
@@ -157,17 +158,17 @@ def print_report_hex(report_data, label):
 
 def main():
     print("=" * 70)
-    print("Phase 4 差分认证完整测试")
+    print("Phase 4 差分认证完整测试 (NO-TRUSTLET)")
     print("=" * 70)
     print()
 
     # ---- Step 1: 检查文件 ----
-    print("[1/7] 检查必需文件...")
+    print("[1/6] 检查必需文件...")
     check_files()
     print()
 
     # ---- Step 2: 读取 WASM 模块 ----
-    print("[2/7] 读取 WASM 模块...")
+    print("[2/6] 读取 WASM 模块...")
     with open(WASM_FILE, "rb") as f:
         wasm_bytes = f.read()
     print(f"  加载 {len(wasm_bytes)} 字节从 {WASM_FILE}")
@@ -182,7 +183,7 @@ def main():
         # Test 1: Monitor 认证 (type=0)
         # ============================================
         total_count += 1
-        print("[Test 1/6] Monitor 认证 (type=0)")
+        print("[Test 1/4] Monitor 认证 (type=0)")
         print("-" * 50)
         try:
             report = w.attest_monitor()
@@ -196,7 +197,7 @@ def main():
         # ============================================
         # Step: Create Zygote
         # ============================================
-        print("[3/7] 创建 Zygote（初始化 WAMR runtime）...")
+        print("[3/6] 创建 Zygote（初始化 WAMR runtime）...")
         print(f"  ELF: {WAMR_PAL_ELF}")
         print("  (VMPL1 将: 初始化堆 → 初始化 WAMR → pal_svsm_exit(0) 挂起)")
         try:
@@ -211,7 +212,7 @@ def main():
         # Test 2: WAMR Runtime 认证 (type=1) — 通过 Zygote
         # ============================================
         total_count += 1
-        print("[Test 2/6] WAMR Runtime 认证 (type=1) — via Zygote")
+        print("[Test 2/4] WAMR Runtime 认证 (type=1) — via Zygote")
         print("-" * 50)
         print("  测试内容: SNP + init_measurement + runtime_measurement")
         try:
@@ -223,44 +224,45 @@ def main():
             print(f"  *** FAIL: {e} ***")
         print()
 
-        # ============================================
-        # Step: Create Trustlet (CoW)
-        # ============================================
-        print("[4/7] 创建 Trustlet（CoW 复制 Zygote）...")
-        try:
-            trustlet = zygote.create_trustlet(DUMMY_FUNCTION)
-            print(f"  Trustlet 创建成功，ID: {trustlet.process_id}")
-        except Exception as e:
-            print(f"  FATAL: {e}")
-            sys.exit(1)
-        print()
+        # [NO-TRUSTLET] Step 4 (Create Trustlet) 和 Test 3 (via Trustlet) 已删除
+        # # ============================================
+        # # Step: Create Trustlet (CoW)
+        # # ============================================
+        # print("[4/7] 创建 Trustlet（CoW 复制 Zygote）...")
+        # try:
+        #     trustlet = zygote.create_trustlet(DUMMY_FUNCTION)
+        #     print(f"  Trustlet 创建成功，ID: {trustlet.process_id}")
+        # except Exception as e:
+        #     print(f"  FATAL: {e}")
+        #     sys.exit(1)
+        # print()
+        #
+        # # ============================================
+        # # Test 3: WAMR Runtime 认证 (type=1) — 通过 Trustlet
+        # # ============================================
+        # total_count += 1
+        # print("[Test 3/6] WAMR Runtime 认证 (type=1) — via Trustlet")
+        # print("-" * 50)
+        # print("  测试内容: 验证 CoW 后度量值继承")
+        # try:
+        #     report = trustlet.attest_wamr_runtime()
+        #     print_report_hex(report, "WAMR Runtime Report (Trustlet)")
+        #     print("  *** PASS: Trustlet WAMR Runtime 认证成功 ***")
+        #     pass_count += 1
+        # except Exception as e:
+        #     print(f"  *** FAIL: {e} ***")
+        # print()
 
         # ============================================
-        # Test 3: WAMR Runtime 认证 (type=1) — 通过 Trustlet
-        # ============================================
-        total_count += 1
-        print("[Test 3/6] WAMR Runtime 认证 (type=1) — via Trustlet")
-        print("-" * 50)
-        print("  测试内容: 验证 CoW 后度量值继承")
-        try:
-            report = trustlet.attest_wamr_runtime()
-            print_report_hex(report, "WAMR Runtime Report (Trustlet)")
-            print("  *** PASS: Trustlet WAMR Runtime 认证成功 ***")
-            pass_count += 1
-        except Exception as e:
-            print(f"  *** FAIL: {e} ***")
-        print()
-
-        # ============================================
-        # Step: invoke_trustlet_bin (Mode 1: Load + Invoke)
+        # Step: invoke_trustlet_bin (Mode 1: Load + Invoke) — 直接在 Zygote 上
         # 这一步会触发 WASM 模块度量 + env_hash 计算
         # ============================================
-        print("[5/7] 调用 add(3, 5) — Mode 1: Load + Invoke")
+        print("[4/6] 调用 add(3, 5) — Mode 1: Load + Invoke (on Zygote)")
         print("  (这会触发 WASM 模块度量 + env_hash 计算)")
         input_data = pack_input_load_and_invoke(wasm_bytes, "add", [3, 5])
         print(f"  输入载荷: {len(input_data)} 字节 (包含 {len(wasm_bytes)} 字节 WASM)")
         try:
-            result_bytes = trustlet.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
+            result_bytes = zygote.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
             status, result = parse_output(result_bytes)
             print(f"  输出: status={status}, result={result}")
             if status == 0 and result == 8:
@@ -273,16 +275,16 @@ def main():
         print()
 
         # ============================================
-        # Test 4: WASM Module 认证 (type=2)
+        # Test 3: WASM Module 认证 (type=2) — 直接在 Zygote 上
         # 必须在 invoke_trustlet_bin (Mode 1) 之后调用
         # ============================================
         total_count += 1
-        print("[Test 4/6] WASM Module 认证 (type=2) — module_id=0")
+        print("[Test 3/4] WASM Module 认证 (type=2) — module_id=0 (on Zygote)")
         print("-" * 50)
         print("  测试内容: SNP + init + runtime + wasm_module_measurements[0]")
         print("  注意: 必须在 invoke_trustlet_bin (Mode 1) 之后调用")
         try:
-            report = trustlet.attest_wasm_module(module_id=0)
+            report = zygote.attest_wasm_module(module_id=0)
             print_report_hex(report, "WASM Module Report")
             print("  *** PASS: WASM Module 认证成功 ***")
             pass_count += 1
@@ -291,11 +293,11 @@ def main():
         print()
 
         # ============================================
-        # Test 5: 函数执行认证 (type=3)
+        # Test 4: 函数执行认证 (type=3) — 直接在 Zygote 上
         # 必须在 invoke_trustlet_bin 之后调用
         # ============================================
         total_count += 1
-        print("[Test 5/6] 函数执行认证 (type=3)")
+        print("[Test 4/4] 函数执行认证 (type=3) (on Zygote)")
         print("-" * 50)
         print("  测试内容: SNP + init + runtime + module + env_hash + input_hash + output_hash + 签名")
         print("  注意: attest_execution 的 input/output 是用户提供的原始数据")
@@ -303,7 +305,7 @@ def main():
         try:
             # input_data 是我们发送给 invoke_trustlet_bin 的打包数据
             # result_bytes 是 invoke_trustlet_bin 返回的输出
-            report = trustlet.attest_execution(
+            report = zygote.attest_execution(
                 input=input_data,
                 input_len=len(input_data),
                 output=result_bytes,
@@ -337,13 +339,13 @@ def main():
         # print()
 
         # ============================================
-        # Cleanup: Send shutdown signal
+        # Cleanup: Send shutdown signal — 直接在 Zygote 上
         # ============================================
-        print("[6/7] 发送关闭信号...")
+        print("[5/6] 发送关闭信号 (on Zygote)...")
         print("  (确保完整资源清理，包括 SVSM 分配)")
         try:
             shutdown_data = pack_shutdown_signal()
-            trustlet.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
+            zygote.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
             print("  关闭完成")
         except Exception as e:
             print(f"  关闭信号: {e}")

@@ -92,28 +92,86 @@ class TrustedProcess:
         self.process_id = process_id
 
 
-class Trustlet(TrustedProcess):
+# [NO-TRUSTLET] Trustlet 类已禁用 — 所有方法已迁移到 Zygote 类
+# class Trustlet(TrustedProcess):
+#     def __init__(self, process_id):
+#         TrustedProcess.__init__(self, process_id)
+#
+#     def attest_wamr_runtime(self) -> str:
+#         """Phase 4: Request WAMR Runtime attestation for this trustlet."""
+#         return _w.attest_wamr_runtime(self.process_id)
+#
+#     def attest_wasm_module(self, module_id: int = 0) -> str:
+#         """Phase 4: Request WASM Module attestation for this trustlet."""
+#         return _w.attest_wasm_module(self.process_id, module_id)
+#
+#     def invoke_trustlet_bin(self, argument: bytes, output_size: int) -> bytes:
+#         ret = _w.invoke_trustlet_bin(self.process_id, argument, output_size)
+#         return ret
+#
+#     def invoke_trustlet(self, argument: str, output_size: int) -> str:
+#         ret = _w.invoke_trustlet(self.process_id, argument, output_size)
+#         return ret
+#
+#     def create_channel(self, trustlet):
+#         ret = _w.create_channel(self.process_id, trustlet.process_id)
+#         return ret
+#
+#     def attest_execution(
+#         self, input: str, input_len: int, output: str, output_len: int,
+#         module_id: int = 0
+#     ) -> str:
+#         """Phase 4: Request function execution attestation (type=3).
+#         Includes init + runtime + wasm_module + env_hash + input_hash + output_hash."""
+#         ret = _w.attest_execution(self.process_id, module_id, input, input_len, output, output_len)
+#         return ret
+#
+#     # helper functions for attestation microbenchmarks
+#     def measure_wasm_module_cold(self, module_id: int = 0):
+#         _w.measure_wasm_module_cold(self.process_id, module_id)
+#         return
+#
+#     def measure_wasm_module_hot(self, module_id: int = 0):
+#         _w.measure_wasm_module_hot(self.process_id, module_id)
+#         return
+#
+#     def measure_function(
+#         self, module_id: int, input: str, input_len: int, output: str, output_len: int
+#     ):
+#         _w.measure_function(self.process_id, module_id, input, input_len, output, output_len)
+#         return
+#
+#     # end of helper functions for attestation microbenchmarks
+#
+#     def delete(self):
+#         _w.delete_trustlet(self.process_id)
+
+
+class Zygote(TrustedProcess):
     def __init__(self, process_id):
         TrustedProcess.__init__(self, process_id)
 
     def attest_wamr_runtime(self) -> str:
-        """Phase 4: Request WAMR Runtime attestation for this trustlet."""
+        """Phase 4: Request WAMR Runtime attestation for this zygote."""
         return _w.attest_wamr_runtime(self.process_id)
 
     def attest_wasm_module(self, module_id: int = 0) -> str:
-        """Phase 4: Request WASM Module attestation for this trustlet."""
+        """Phase 4: Request WASM Module attestation (type=2)."""
         return _w.attest_wasm_module(self.process_id, module_id)
 
     def invoke_trustlet_bin(self, argument: bytes, output_size: int) -> bytes:
+        """直接在 Zygote 上执行 invoke（原 Trustlet 方法）。"""
         ret = _w.invoke_trustlet_bin(self.process_id, argument, output_size)
         return ret
 
     def invoke_trustlet(self, argument: str, output_size: int) -> str:
+        """直接在 Zygote 上执行 invoke（原 Trustlet 方法）。"""
         ret = _w.invoke_trustlet(self.process_id, argument, output_size)
         return ret
 
-    def create_channel(self, trustlet):
-        ret = _w.create_channel(self.process_id, trustlet.process_id)
+    def create_channel(self, other):
+        """创建与另一个进程的通信通道。"""
+        ret = _w.create_channel(self.process_id, other.process_id)
         return ret
 
     def attest_execution(
@@ -125,44 +183,16 @@ class Trustlet(TrustedProcess):
         ret = _w.attest_execution(self.process_id, module_id, input, input_len, output, output_len)
         return ret
 
-    # helper functions for attestation microbenchmarks
-    def measure_wasm_module_cold(self, module_id: int = 0):
-        _w.measure_wasm_module_cold(self.process_id, module_id)
-        return
-
-    def measure_wasm_module_hot(self, module_id: int = 0):
-        _w.measure_wasm_module_hot(self.process_id, module_id)
-        return
-
-    def measure_function(
-        self, module_id: int, input: str, input_len: int, output: str, output_len: int
-    ):
-        _w.measure_function(self.process_id, module_id, input, input_len, output, output_len)
-        return
-
-    # end of helper functions for attestation microbenchmarks
-
-    def delete(self):
-        _w.delete_trustlet(self.process_id)
-
-
-class Zygote(TrustedProcess):
-    def __init__(self, process_id):
-        TrustedProcess.__init__(self, process_id)
-
-    def attest_wamr_runtime(self) -> str:
-        """Phase 4: Request WAMR Runtime attestation for this zygote."""
-        return _w.attest_wamr_runtime(self.process_id)
-
-    def create_trustlet(self, function_code: FileName) -> Trustlet:
-        if not Path(function_code).exists():
-            raise Exception(f"Function Code {function_code} not found")
-        with open(function_code, mode="r") as file:
-            function_code = file.read()
-        trustlet_id = _w.create_trustlet(self.process_id, function_code)
-        if trustlet_id < 0:
-            raise Exception(f"Failed to create trustlet")
-        return Trustlet(trustlet_id)
+    # [NO-TRUSTLET] create_trustlet 已禁用 — 不再需要创建 Trustlet
+    # def create_trustlet(self, function_code: FileName) -> Trustlet:
+    #     if not Path(function_code).exists():
+    #         raise Exception(f"Function Code {function_code} not found")
+    #     with open(function_code, mode="r") as file:
+    #         function_code = file.read()
+    #     trustlet_id = _w.create_trustlet(self.process_id, function_code)
+    #     if trustlet_id < 0:
+    #         raise Exception(f"Failed to create trustlet")
+    #     return Trustlet(trustlet_id)
 
     # helper functions for attestation microbenchmarks
     def prepare_measure_wamr_runtime_cold(self):
@@ -175,6 +205,20 @@ class Zygote(TrustedProcess):
 
     def measure_wamr_runtime_hot(self):
         _w.measure_wamr_runtime_hot(self.process_id)
+        return
+
+    def measure_wasm_module_cold(self, module_id: int = 0):
+        _w.measure_wasm_module_cold(self.process_id, module_id)
+        return
+
+    def measure_wasm_module_hot(self, module_id: int = 0):
+        _w.measure_wasm_module_hot(self.process_id, module_id)
+        return
+
+    def measure_function(
+        self, module_id: int, input: str, input_len: int, output: str, output_len: int
+    ):
+        _w.measure_function(self.process_id, module_id, input, input_len, output, output_len)
         return
 
     # end of helper functions for attestation microbenchmarks

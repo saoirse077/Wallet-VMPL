@@ -154,6 +154,8 @@ void monitor_init() {
     printf("Init called\n");
 }
 
+/* [NO-TRUSTLET] single_exec() 已禁用 — 使用了已删除的 createTrustlet 和 trustlet union */
+/*
 void single_exec(){
     u64 page_size = sysconf(_SC_PAGESIZE);
     struct monitor_call call; 
@@ -166,6 +168,7 @@ void single_exec(){
     printf("Init called\n");
     free(att_buffer);
 }
+*/
 
 struct zygote_data {
     void* zygote_data[3];
@@ -223,6 +226,8 @@ int create_zygote(const char* zygote){
     return ret;
 }
 
+/* [NO-TRUSTLET] create_trustlet() 已禁用 */
+/*
 int create_trustlet(const int zygote_id) {
     printf("Trying to register Trustlet with Monitor\n");
 
@@ -235,6 +240,7 @@ int create_trustlet(const int zygote_id) {
     printf("Trustlet ID: %d\n", ret);
     return ret;
 }
+*/
 
 int invoke_trustlet(const int trustlet_id) {
     printf("Trying to invoke Trustlet\n");
@@ -592,6 +598,8 @@ int main(int argc, char** argv)
     }
 
     switch (test_num) {
+        /* [NO-TRUSTLET] case 0 已禁用 — 使用了 create_trustlet */
+        /*
         case 0: {
             // OK
             printf("Trustlet test\n");
@@ -604,6 +612,7 @@ int main(int argc, char** argv)
 		uint64_t initial_cycles = get_cycles();
         single_exec();
 		uint64_t final_cycles = get_cycles();
+        */
         int i = 0;
 
 		printf("CPU freq: %ld\n", CPU_freq);
@@ -645,6 +654,8 @@ int main(int argc, char** argv)
             invoke_trustlet(3);
             break;
         }
+        /* [NO-TRUSTLET] case 10 已禁用 — 使用了 create_trustlet/attest_trustlet */
+        /*
         case 10: {
             printf("----- Differential attestation test -----\n");
             int ret = 0;
@@ -708,6 +719,7 @@ int main(int argc, char** argv)
             free(function_data_ptr);
             break;
         }
+        */
         case 100+0: {
             printf("Attestation test\n");
             key_pair* keys = prepair_keys();

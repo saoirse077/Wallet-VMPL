@@ -7,14 +7,13 @@ including Phase 3b module reuse: the WASM module is loaded once on the first
 invocation, and subsequent function calls reuse the already-loaded module
 without re-sending WASM bytecode.
 
-Execution flow:
+Execution flow (NO-TRUSTLET: 直接在 Zygote 上执行):
   1. create_zygote(wamr_pal.elf) → SVSM loads ELF, runs early_invoke
      → VMPL1 initializes heap + WAMR runtime → pal_svsm_exit(0) suspends
-  2. zygote.create_trustlet(dummy) → SVSM CoW duplicates the zygote
-  3. First invoke_trustlet_bin: Mode 1 (load + invoke)
+  2. First invoke_trustlet_bin(zygote_id): Mode 1 (load + invoke)
      → packed_input contains WASM bytecode + function name + args
      → VMPL1 loads module, invokes function, returns result
-  4. Subsequent invoke_trustlet_bin: Mode 2 (invoke-only, reuse module)
+  3. Subsequent invoke_trustlet_bin(zygote_id): Mode 2 (invoke-only, reuse module)
      → packed_input contains only function name + args (no WASM bytecode)
      → VMPL1 reuses loaded module, invokes function, returns result
 
@@ -66,7 +65,8 @@ WAMR_PAL_ELF = "./wamr_pal.elf"
 DUMMY_MANIFEST = "./dummy.manifest"
 DUMMY_LIBOS = "./dummy.libos"
 WASM_FILE = "./add.wasm"
-DUMMY_FUNCTION = "./dummy_function.txt"
+# [NO-TRUSTLET] DUMMY_FUNCTION 不再需要
+# DUMMY_FUNCTION = "./dummy_function.txt"
 
 OUTPUT_SIZE = 4096  # Must be >= 8 bytes for our protocol
 
@@ -83,11 +83,10 @@ def check_files():
         if not os.path.exists(path):
             missing.append(f"  {desc}: {path}")
 
-    # Create dummy_function.txt if it doesn't exist
-    # (needed by create_trustlet which reads a file)
-    if not os.path.exists(DUMMY_FUNCTION):
-        with open(DUMMY_FUNCTION, "w") as f:
-            f.write("dummy")
+    # [NO-TRUSTLET] dummy_function.txt 不再需要
+    # if not os.path.exists(DUMMY_FUNCTION):
+    #     with open(DUMMY_FUNCTION, "w") as f:
+    #         f.write("dummy")
 
     if missing:
         print("ERROR: Missing required files:")
@@ -188,14 +187,14 @@ def parse_output(output_bytes):
     return (status, result)
 
 
-def invoke_and_check(trustlet, input_data, expected_result, test_desc):
+def invoke_and_check(process, input_data, expected_result, test_desc):
     """
     Invoke a function and check the result.
 
     Returns True if the test passed, False otherwise.
     """
     try:
-        result_bytes = trustlet.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
+        result_bytes = process.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
         status, result = parse_output(result_bytes)
         print(f"  Output: status={status}, result={result}")
         if status == 0 and result == expected_result:
@@ -212,24 +211,24 @@ def invoke_and_check(trustlet, input_data, expected_result, test_desc):
 
 def main():
     print("=" * 60)
-    print("WAMR-PAL Phase 3b Test — Module Reuse + SVSM Cleanup")
+    print("WAMR-PAL Phase 3b Test — Module Reuse + SVSM Cleanup (NO-TRUSTLET)")
     print("=" * 60)
     print()
 
     # ---- Step 1: Check files ----
-    print("[1/5] Checking required files...")
+    print("[1/4] Checking required files...")
     check_files()
     print()
 
     # ---- Step 2: Read WASM module ----
-    print("[2/5] Reading WASM module...")
+    print("[2/4] Reading WASM module...")
     with open(WASM_FILE, "rb") as f:
         wasm_bytes = f.read()
     print(f"  Loaded {len(wasm_bytes)} bytes from {WASM_FILE}")
     print()
 
     # ---- Step 3: Create Zygote ----
-    print("[3/5] Creating Zygote (initializes WAMR runtime in VMPL1)...")
+    print("[3/4] Creating Zygote (initializes WAMR runtime in VMPL1)...")
     print(f"  ELF: {WAMR_PAL_ELF}")
     print("  (VMPL1 will: init heap → init WAMR → pal_svsm_exit(0))")
     print()
@@ -244,19 +243,19 @@ def main():
             sys.exit(1)
         print()
 
-        # ---- Step 4: Create Trustlet (CoW duplicate) ----
-        print("[4/5] Creating Trustlet (CoW duplicate of Zygote)...")
-        try:
-            trustlet = zygote.create_trustlet(DUMMY_FUNCTION)
-            trustlet_id = trustlet.process_id
-            print(f"  Trustlet created with ID: {trustlet_id}")
-        except Exception as e:
-            print(f"  FAILED: {e}")
-            sys.exit(1)
-        print()
+        # [NO-TRUSTLET] Step 4 (Create Trustlet) 已删除 — 直接在 Zygote 上 invoke
+        # print("[4/5] Creating Trustlet (CoW duplicate of Zygote)...")
+        # try:
+        #     trustlet = zygote.create_trustlet(DUMMY_FUNCTION)
+        #     trustlet_id = trustlet.process_id
+        #     print(f"  Trustlet created with ID: {trustlet_id}")
+        # except Exception as e:
+        #     print(f"  FAILED: {e}")
+        #     sys.exit(1)
+        # print()
 
-        # ---- Step 5: Invoke WASM functions ----
-        print("[5/5] Invoking WASM functions via invoke_trustlet_bin...")
+        # ---- Step 4: Invoke WASM functions (直接在 Zygote 上) ----
+        print("[4/4] Invoking WASM functions via invoke_trustlet_bin (on Zygote)...")
         print()
 
         pass_count = 0
@@ -269,7 +268,7 @@ def main():
         input_data = pack_input_load_and_invoke(wasm_bytes, "add", [3, 5])
         print(f"  Input payload: {len(input_data)} bytes (includes {len(wasm_bytes)} bytes WASM)")
         print(f"    Header: wasm_size={len(wasm_bytes)}, func='add', argc=2, argv=[3, 5]")
-        if invoke_and_check(trustlet, input_data, 8, "add(3, 5)"):
+        if invoke_and_check(zygote, input_data, 8, "add(3, 5)"):
             pass_count += 1
         print()
 
@@ -280,7 +279,7 @@ def main():
         input_data = pack_input_invoke_only("add", [10, 20])
         print(f"  Input payload: {len(input_data)} bytes (no WASM)")
         print(f"    Header: wasm_size=0, func='add', argc=2, argv=[10, 20]")
-        if invoke_and_check(trustlet, input_data, 30, "add(10, 20)"):
+        if invoke_and_check(zygote, input_data, 30, "add(10, 20)"):
             pass_count += 1
         print()
 
@@ -291,7 +290,7 @@ def main():
         input_data = pack_input_invoke_only("add", [100, 200])
         print(f"  Input payload: {len(input_data)} bytes (no WASM)")
         print(f"    Header: wasm_size=0, func='add', argc=2, argv=[100, 200]")
-        if invoke_and_check(trustlet, input_data, 300, "add(100, 200)"):
+        if invoke_and_check(zygote, input_data, 300, "add(100, 200)"):
             pass_count += 1
         print()
 
@@ -302,7 +301,7 @@ def main():
         input_data = pack_input_invoke_only("multiply", [4, 7])
         print(f"  Input payload: {len(input_data)} bytes (no WASM)")
         print(f"    Header: wasm_size=0, func='multiply', argc=2, argv=[4, 7]")
-        if invoke_and_check(trustlet, input_data, 28, "multiply(4, 7)"):
+        if invoke_and_check(zygote, input_data, 28, "multiply(4, 7)"):
             pass_count += 1
         print()
 
@@ -313,7 +312,7 @@ def main():
         input_data = pack_input_invoke_only("get_answer", [])
         print(f"  Input payload: {len(input_data)} bytes (no WASM)")
         print(f"    Header: wasm_size=0, func='get_answer', argc=0")
-        if invoke_and_check(trustlet, input_data, 42, "get_answer()"):
+        if invoke_and_check(zygote, input_data, 42, "get_answer()"):
             pass_count += 1
         print()
 
@@ -326,7 +325,7 @@ def main():
         
         try:
             # Send shutdown signal (Mode 3) - VMPL1 should not return any data for this
-            result_bytes = trustlet.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
+            result_bytes = zygote.invoke_trustlet_bin(shutdown_data, OUTPUT_SIZE)
             print(f"  Shutdown completed (received {len(result_bytes) if result_bytes else 0} bytes)")
         except Exception as e:
             print(f"  Shutdown signal sent (exception expected): {e}")

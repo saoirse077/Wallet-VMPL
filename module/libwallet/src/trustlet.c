@@ -22,6 +22,8 @@ struct linux_dirent64 {
     char            d_name[]; /* Filename (null-terminated) */
 };
 
+/* [NO-TRUSTLET] INIT_CREATE_TRUSTLET 宏已禁用 */
+/*
 #define INIT_CREATE_TRUSTLET(id, data, size)\
     do {                                    \
     call.type = createTrustlet;             \
@@ -29,6 +31,7 @@ struct linux_dirent64 {
     call.trustlet.trustlet_data = data;     \
     call.trustlet.size = size;              \
     } while(0)
+*/
 
 static int is_dot_or_dotdot(const char *name) {
     return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
@@ -41,6 +44,8 @@ static void allocate_trustlet_struct(struct trustlet_invokation** z){
     *z = (void*)buf;
 }
 
+/* [NO-TRUSTLET] create_trustlet() 已禁用 — 不再从 Zygote 派生 Trustlet */
+/*
 int create_trustlet(const int zygote_id, char* func) {
     #ifndef NODEBUG
     printf("Trying to register Trustlet with Monitor\n");
@@ -64,6 +69,7 @@ int create_trustlet(const int zygote_id, char* func) {
     #endif
     return ret;
 }
+*/
 
 
 char* invoke_trustlet_bin(const int trustlet_id, void* args, uint64_t args_size, uint64_t output_size) {
@@ -390,6 +396,8 @@ void create_channel(const int trustlet_id_1, const int trustlet_id_2){
     ioctl(con, VMPL_WR, &call);
 }
 
+/* [NO-TRUSTLET] delete_trustlet() 已禁用 */
+/*
 int delete_trustlet(const int trustlet_id) {
     struct monitor_call call;
     call.type = deleteTrustlet;
@@ -400,3 +408,4 @@ int delete_trustlet(const int trustlet_id) {
 #endif
     return ioctl(con, VMPL_WR, &call);
 }
+*/

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-attest_microbenchmark_v2_1.py - Phase 4 v2.1 差分认证 Microbenchmark 测试
+attest_microbenchmark_v2_1.py - Phase 4 v2.1 差分认证 Microbenchmark 测试 (NO-TRUSTLET)
 
 与 v2.0 的区别：
-  v2.0: 只创建一次 Zygote/Trustlet，在同一个进程上重复测量 ioctl 调用时间
-  v2.1: 每次迭代重新创建 Zygote/Trustlet（与 Wallet-VMPL 原版设计一致），
+  v2.0: 只创建一次 Zygote，在同一个进程上重复测量 ioctl 调用时间
+  v2.1: 每次迭代重新创建 Zygote（与 Wallet-VMPL 原版设计一致），
         测量包含进程创建开销的端到端冷/热启动时间，更准确反映真实场景
 
-约束：
-  - PROCESS_STORE 只有 16 个槽位
-  - 每次迭代消耗 2 个槽位（1 Zygote + 1 Trustlet）
+约束 (NO-TRUSTLET 改造后)：
+  - PROCESS_STORE 有 32 个槽位（改造前为 16）
+  - 每次迭代消耗 1 个槽位（仅 Zygote，改造前为 2 个: Zygote + Trustlet）
   - Wallet-VMPL 的 delete 实现有 VMSA RMP 清理 bug，不能使用 delete
-  - 因此最多迭代 8 次（8 × 2 = 16 个槽位）
+  - 因此最多迭代 32 次（32 × 1 = 32 个槽位，改造前最多 8 次）
   - 参考原版 Wallet-VMPL attestation_microbenchmark.py：不 delete、不 shutdown，
     每次迭代创建全新进程
 
@@ -25,7 +25,6 @@ attest_microbenchmark_v2_1.py - Phase 4 v2.1 差分认证 Microbenchmark 测试
   - vmpl.ko 已加载 (insmod vmpl.ko)
   - wallet Python 模块已安装
   - wamr_pal.elf, dummy.manifest, dummy.libos, add.wasm 在当前目录
-  - dummy_function.txt 在当前目录（会自动创建）
 
 Usage (inside the guest VM):
   cd /root/module
@@ -52,14 +51,18 @@ SCRIPTDIR = Path(os.path.dirname(os.path.realpath(__file__)))
 
 # Configuration
 fn_in_out_sizes = [64, 1024, 4096]  # size of function input/output in bytes
-repeats = 8  # PROCESS_STORE has 16 slots, each iteration uses 2 (Zygote + Trustlet)
+# [NO-TRUSTLET] 每次迭代只消耗 1 个槽位（仅 Zygote），PROCESS_STORE_SIZE=32
+# 改造前: repeats = 8 (16 slots / 2 per iteration)
+# 改造后: repeats = 16 (32 slots / 1 per iteration, 保守设置)
+repeats = 8
 
 # File paths (same as test_phase4_attest.py)
 WAMR_PAL_ELF = "./wamr_pal.elf"
 DUMMY_MANIFEST = "./dummy.manifest"
 DUMMY_LIBOS = "./dummy.libos"
 WASM_FILE = "./add.wasm"
-DUMMY_FUNCTION = "./dummy_function.txt"
+# [NO-TRUSTLET] DUMMY_FUNCTION 不再需要
+# DUMMY_FUNCTION = "./dummy_function.txt"
 OUTPUT_SIZE = 4096
 
 
@@ -152,10 +155,10 @@ class Runner:
             if not os.path.exists(path):
                 missing.append(f"  {desc}: {path}")
 
-        # Create dummy_function.txt if not exists
-        if not os.path.exists(DUMMY_FUNCTION):
-            with open(DUMMY_FUNCTION, "w") as f:
-                f.write("dummy")
+        # [NO-TRUSTLET] dummy_function.txt 不再需要
+        # if not os.path.exists(DUMMY_FUNCTION):
+        #     with open(DUMMY_FUNCTION, "w") as f:
+        #         f.write("dummy")
 
         if missing:
             print("ERROR: Missing required files:")
@@ -169,11 +172,11 @@ class Runner:
         libos: FileName = DUMMY_LIBOS,
     ):
         print("=" * 70)
-        print("Phase 4 v2.1 Attestation Microbenchmark (per-iteration process creation)")
+        print("Phase 4 v2.1 Attestation Microbenchmark (per-iteration process creation, NO-TRUSTLET)")
         print(f"  Repeats: {repeats}")
         print(f"  Function I/O sizes: {fn_in_out_sizes}")
-        print(f"  NOTE: Each iteration creates fresh Zygote + Trustlet")
-        print(f"        (max {repeats} iterations due to 16-slot PROCESS_STORE limit)")
+        print(f"  NOTE: Each iteration creates fresh Zygote (no Trustlet)")
+        print(f"        (max {repeats} iterations due to 32-slot PROCESS_STORE limit)")
         print("=" * 70)
         print()
 
@@ -197,15 +200,15 @@ class Runner:
 
         # Design rationale (matching Wallet-VMPL original attestation_microbenchmark.py):
         #
-        # Each iteration creates a fresh Zygote and Trustlet, so every measurement
-        # is performed on a brand-new process with independent memory, page tables,
-        # and measurement caches. This avoids any warm-cache bias from reusing the
-        # same process across iterations.
+        # [NO-TRUSTLET] Each iteration creates a fresh Zygote (no Trustlet needed),
+        # so every measurement is performed on a brand-new process with independent
+        # memory, page tables, and measurement caches. This avoids any warm-cache
+        # bias from reusing the same process across iterations.
         #
         # Like the original Wallet-VMPL test, we do NOT call delete() or shutdown
         # within the loop. The SVSM's delete implementation has a VMSA RMP cleanup
         # bug that causes hangs on re-creation. Instead, old processes simply remain
-        # in PROCESS_STORE (unused), and we limit iterations to 8 (= 16 slots / 2).
+        # in PROCESS_STORE (unused), and we limit iterations to 16 (= 32 slots / 1).
         #
         # The Wallet context manager (with ... as w) only closes the /dev/vmpl_device
         # file descriptor on exit — it does NOT free PROCESS_STORE slots.
@@ -234,21 +237,21 @@ class Runner:
                 results["measure_wamr_runtime_hot"].append(
                     self.time_function(zy.measure_wamr_runtime_hot))
 
-                # ---- Create Trustlet (CoW copy of Zygote) ----
-                tr = zy.create_trustlet(DUMMY_FUNCTION)
+                # [NO-TRUSTLET] 不再创建 Trustlet，直接在 Zygote 上 invoke
+                # tr = zy.create_trustlet(DUMMY_FUNCTION)
 
                 # invoke_trustlet_bin to load WASM module (triggers WASM measurement)
                 input_data = pack_input_load_and_invoke(wasm_bytes, "add", [3, 5])
-                tr.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
+                zy.invoke_trustlet_bin(input_data, OUTPUT_SIZE)
                 module_id = 0  # First loaded module
 
                 # ---- WASM Module measurements ----
                 # WASM Module cold: mount input channel, re-measure WASM bytecode
                 results["measure_wasm_module_cold"].append(
-                    self.time_function(lambda: tr.measure_wasm_module_cold(module_id)))
+                    self.time_function(lambda: zy.measure_wasm_module_cold(module_id)))
                 # WASM Module hot: from cached wasm_module_measurements
                 results["measure_wasm_module_hot"].append(
-                    self.time_function(lambda: tr.measure_wasm_module_hot(module_id)))
+                    self.time_function(lambda: zy.measure_wasm_module_hot(module_id)))
 
                 # ---- Function execution measurements ----
                 for size in fn_in_out_sizes:
@@ -256,14 +259,14 @@ class Runner:
                     fn_output = os.urandom(size)
                     results["measure_function"][size].append(
                         self.time_function(
-                            lambda s=size, fi=fn_input, fo=fn_output: tr.measure_function(
+                            lambda s=size, fi=fn_input, fo=fn_output: zy.measure_function(
                                 module_id, fi, len(fi), fo, len(fo))
                         )
                     )
 
                 # NOTE: No delete() or shutdown here — same as original Wallet-VMPL.
-                # Old Zygote/Trustlet remain in PROCESS_STORE but are never reused.
-                # This is safe because we limit iterations to 8 (16 slots / 2).
+                # [NO-TRUSTLET] Old Zygotes remain in PROCESS_STORE but are never reused.
+                # This is safe because we limit iterations to 16 (32 slots / 1).
 
         print()
         print("=" * 70)
